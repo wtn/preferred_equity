@@ -269,48 +269,78 @@ def synthesis_agent(state: AdvancedSwarmState) -> dict:
     market_data = state["market_data"]
     rate_data = state["rate_data"]
     dividend_data = state["dividend_data"]
-    quality_report = state["quality_report"]
 
-    system_prompt = """You are a preferred equity analyst. You receive three data 
-sources about a preferred stock: market data, Treasury yield curve data, and 
-dividend payment analysis. A quality check has already verified the data.
+    # Load the institutional prompt
+    prompt_path = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "institutional_synthesis_prompt.md")
+    with open(prompt_path, "r") as f:
+        institutional_prompt_template = f.read()
 
-Produce a comprehensive preliminary analysis covering:
+    # Extract relevant data for prompt placeholders
+    ticker = market_data.get("ticker", "N/A")
+    issuer = market_data.get("name", "Unknown Issuer").replace("Preferred Stock", "").strip()
+    current_price = market_data.get("price", 0.0)
+    div_yield = market_data.get("dividend_yield", 0.0) * 100 if market_data.get("dividend_yield") is not None else 0.0
+    ten_yr_yield = rate_data.get("10Y", rate_data.get("20Y", 0.0))
+    spread_bps = (div_yield - ten_yr_yield) * 100 if ten_yr_yield else 0
+    fifty_two_week_high = market_data.get("fifty_two_week_high", 0.0)
+    fifty_two_week_low = market_data.get("fifty_two_week_low", 0.0)
+    
+    # Determine trading range for Security Overview
+    trading_range_desc = ""
+    if current_price > 0:
+        if current_price >= fifty_two_week_high * 0.95:
+            trading_range_desc = "near its 52-week high"
+        elif current_price <= fifty_two_week_low * 1.05:
+            trading_range_desc = "near its 52-week low"
+        else:
+            trading_range_desc = "in its mid-range"
 
-1. Security Overview: What is this security, who issued it, what sector
-2. Yield Assessment: How does the yield compare to Treasuries? What is the spread?
-3. Dividend Analysis: Is the payment pattern consistent? Fixed or variable rate?
-   What is the payment frequency and trend?
-4. Risk Factors: Based on the data available, what risks should an investor consider?
-5. Recommendation for Further Analysis: What additional data would improve this assessment?
+    # Fill in the prompt placeholders
+    formatted_prompt = institutional_prompt_template.format(
+        ticker=ticker,
+        issuer=issuer,
+        current_price=current_price,
+        div_yield=div_yield,
+        ten_yr_yield=ten_yr_yield,
+        spread_bps=int(spread_bps),
+        trading_range_desc=trading_range_desc,
+        dividend_frequency=dividend_data.get("frequency", "N/A"),
+        dividend_consistency=dividend_data.get("consistency", "N/A"),
+        trailing_annual_dividends=dividend_data.get("trailing_annual_dividends", 0.0),
+        market_data_json=json.dumps(market_data, indent=2),
+        rate_data_json=json.dumps(rate_data, indent=2),
+        dividend_data_json=json.dumps(dividend_data, indent=2),
+    )
 
-Write in professional financial language. Use complete paragraphs, not bullet points.
-Do not use em dashes or sentence dashes. Keep the analysis to 300-400 words.
-Note any data quality issues flagged by the quality check."""
+    messages = [
+        SystemMessage(content="You are an expert financial analyst specializing in preferred equity securities. Your task is to synthesize the provided market, rate, and dividend data for a given preferred stock into a concise, professional research note suitable for an institutional investor. The analysis should be comprehensive, covering key aspects of preferred equity investment. Output must be in Markdown format, structured with clear headings and bullet points where appropriate. Avoid any raw JSON or technical details from the agent outputs. The tone should be professional and objective. Do not use em dashes or sentence dashes; rephrase sentences to avoid them."),
+        HumanMessage(content=formatted_prompt),
+    ]
 
-    user_prompt = f"""Analyze this preferred stock:
+    response = llm.invoke(messages)
+    print(f"  [Synthesis Agent] Gemini response received.")
 
-MARKET DATA:
-{json.dumps(market_data, indent=2, default=str)}
+    # Extract clean text content from the response.
+    # Gemini via langchain-google-genai sometimes returns response.content as a
+    # list of dicts: [{'type': 'text', 'text': '...', 'extras': {...}}]
+    # rather than a plain string. We handle both cases here.
+    raw = response.content
+    if isinstance(raw, list):
+        # Extract text from all text-type blocks and join them
+        content = "\n".join(
+            block["text"] for block in raw
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+    else:
+        content = str(raw).strip()
 
-TREASURY YIELD CURVE:
-{json.dumps(rate_data, indent=2)}
+    # Clean up any potential markdown code block wrappers
+    if content.startswith("```markdown") and content.endswith("```"):
+        content = content[len("```markdown\n"):-len("\n```")].strip()
+    elif content.startswith("```") and content.endswith("```"):
+        content = content[len("```\n"):-len("\n```")].strip()
 
-DIVIDEND PATTERN ANALYSIS:
-{json.dumps(dividend_data, indent=2, default=str)}
-
-DATA QUALITY REPORT:
-{json.dumps(quality_report, indent=2)}
-
-Provide your comprehensive analysis."""
-
-    response = llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ])
-
-    print("  [Synthesis Agent] Done.")
-    return {"synthesis": response.content}
+    return {"synthesis": content}
 
 
 # ---------------------------------------------------------------------------
