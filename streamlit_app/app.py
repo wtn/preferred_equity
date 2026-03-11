@@ -2,7 +2,7 @@
 Preferred Equity Analysis Swarm: Streamlit Demo
 =================================================
 A web interface for the multi-agent preferred equity analysis system.
-Allows users to enter a preferred stock ticker and view the swarm's analysis.
+Demonstrates parallel execution, conditional routing, and quality gating.
 """
 
 import sys
@@ -15,7 +15,7 @@ import pandas as pd
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.agents.hello_world_swarm import analyze_preferred
+from src.agents.advanced_swarm import analyze_preferred_advanced
 from src.data.market_data import get_price_history
 
 
@@ -45,29 +45,40 @@ with st.sidebar:
     st.write(
         "This demo showcases a multi-agent AI swarm that analyzes "
         "preferred equity securities. The swarm coordinates specialized "
-        "agents to evaluate market data, interest rate context, and "
-        "produce a synthesized analysis."
+        "agents running in parallel, with a quality gate that determines "
+        "whether data is sufficient for AI synthesis."
     )
     
     st.markdown("---")
     
-    st.subheader("Swarm Agents")
+    st.subheader("Swarm Architecture")
     st.markdown("""
-    **Active in this demo:**
+    **Data Agents (Parallel):**
     1. Market Data Agent
-    2. Rate Context Agent  
-    3. Synthesis Agent (Gemini)
+    2. Rate Context Agent
+    3. Dividend Analysis Agent
     
-    **Coming in Phase 2+:**
-    4. Prospectus Parsing Agent
-    5. Credit Analysis Agent
-    6. Call Probability Agent
-    7. Tax & Yield Agent
-    8. Relative Value Agent
+    **Quality Gate:**
+    4. Quality Check Agent
+    
+    **Conditional Routing:**
+    5a. Synthesis Agent (Gemini) *or*
+    5b. Error Report Agent
     """)
     
     st.markdown("---")
-    st.caption("Phase 0: Hello World Prototype")
+    
+    st.subheader("LangGraph Patterns")
+    st.markdown("""
+    **Fan-Out:** 3 agents run in parallel from START
+    
+    **Fan-In:** All converge at Quality Check
+    
+    **Conditional Edge:** Routes to Synthesis or Error based on data quality score
+    """)
+    
+    st.markdown("---")
+    st.caption("Phase 0: Advanced Prototype")
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +86,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 st.title("Preferred Equity Analysis Swarm")
-st.markdown("Enter a preferred stock ticker to run the multi-agent analysis.")
+st.markdown("Enter a preferred stock ticker to run the multi-agent analysis with parallel execution and quality gating.")
 
 # Sample tickers for easy access
 col1, col2 = st.columns([3, 1])
@@ -122,13 +133,25 @@ if analyze_button and ticker:
         
         # Run the swarm
         try:
-            status_placeholder.info("Agent 1/3: Market Data Agent fetching security data...")
-            progress_bar.progress(15, text="Market Data Agent running...")
+            status_placeholder.info("Running 3 data agents in parallel...")
+            progress_bar.progress(10, text="Data agents running in parallel...")
             
-            result = analyze_preferred(ticker)
+            result = analyze_preferred_advanced(ticker)
             
-            progress_bar.progress(100, text="Analysis complete!")
-            status_placeholder.success("All agents completed successfully.")
+            # Check quality outcome
+            quality = result.get("quality_report", {})
+            if quality.get("passed", False):
+                progress_bar.progress(100, text="Analysis complete!")
+                status_placeholder.success(
+                    f"All agents completed. Quality score: {quality.get('overall_score', 0):.0%}. "
+                    f"Route: Synthesis Agent."
+                )
+            else:
+                progress_bar.progress(100, text="Analysis complete (with issues)")
+                status_placeholder.warning(
+                    f"Quality score: {quality.get('overall_score', 0):.0%} (below threshold). "
+                    f"Route: Error Report Agent."
+                )
             
         except Exception as e:
             st.error(f"Analysis failed: {str(e)}")
@@ -137,19 +160,65 @@ if analyze_button and ticker:
     st.markdown("---")
     
     # ---------------------------------------------------------------------------
-    # Results Display
+    # Agent Status Dashboard
     # ---------------------------------------------------------------------------
     
-    # Row 1: Key Metrics
-    st.subheader("Key Metrics")
+    st.subheader("Agent Execution Status")
+    
+    agent_status = result.get("agent_status", {})
+    quality_report = result.get("quality_report", {})
+    
+    status_cols = st.columns(5)
+    
+    agent_labels = [
+        ("market_data", "Market Data"),
+        ("rate_context", "Rate Context"),
+        ("dividend", "Dividend Analysis"),
+    ]
+    
+    for i, (key, label) in enumerate(agent_labels):
+        with status_cols[i]:
+            status = agent_status.get(key, "unknown")
+            if status == "success":
+                st.metric(label, "OK", delta="success", delta_color="normal")
+            elif status == "failed":
+                st.metric(label, "FAIL", delta="failed", delta_color="inverse")
+            else:
+                st.metric(label, "?", delta="unknown", delta_color="off")
+    
+    with status_cols[3]:
+        qscore = quality_report.get("overall_score", 0)
+        passed = quality_report.get("passed", False)
+        st.metric(
+            "Quality Gate",
+            f"{qscore:.0%}",
+            delta="passed" if passed else "failed",
+            delta_color="normal" if passed else "inverse"
+        )
+    
+    with status_cols[4]:
+        route = quality_report.get("decision", "unknown")
+        if route == "proceed_to_synthesis":
+            st.metric("Route Taken", "Synthesis", delta="AI analysis", delta_color="normal")
+        else:
+            st.metric("Route Taken", "Error Report", delta="fallback", delta_color="inverse")
+    
+    st.markdown("---")
+    
+    # ---------------------------------------------------------------------------
+    # Key Metrics
+    # ---------------------------------------------------------------------------
     
     market_data = result.get("market_data", {})
     rate_data = result.get("rate_data", {})
+    dividend_data = result.get("dividend_data", {})
     
-    metric_cols = st.columns(4)
+    st.subheader("Key Metrics")
+    
+    metric_cols = st.columns(5)
     
     with metric_cols[0]:
-        price = market_data.get("price", "N/A")
+        price = market_data.get("price", None)
         st.metric("Current Price", f"${price:,.2f}" if isinstance(price, (int, float)) else "N/A")
     
     with metric_cols[1]:
@@ -159,8 +228,6 @@ if analyze_button and ticker:
     with metric_cols[2]:
         div_yield = market_data.get("dividend_yield", None)
         if div_yield:
-            # yfinance may return yield as decimal (0.059) or percentage (5.9)
-            # Normalize to percentage for display
             yield_pct = div_yield if div_yield > 1 else div_yield * 100
             st.metric("Current Yield", f"{yield_pct:.2f}%")
         else:
@@ -175,22 +242,28 @@ if analyze_button and ticker:
         else:
             st.metric("Spread vs Treasury", "N/A")
     
+    with metric_cols[4]:
+        consistency = dividend_data.get("consistency", "N/A")
+        frequency = dividend_data.get("frequency", "N/A")
+        st.metric("Dividend Pattern", f"{frequency.title()}", delta=consistency, delta_color="normal" if consistency in ("excellent", "good") else "off")
+    
     st.markdown("---")
     
-    # Row 2: Charts side by side
+    # ---------------------------------------------------------------------------
+    # Charts Row
+    # ---------------------------------------------------------------------------
+    
     chart_col1, chart_col2 = st.columns(2)
     
     with chart_col1:
         st.subheader("Treasury Yield Curve vs Preferred Yield")
         
         if rate_data:
-            # Build yield curve chart
             maturities = list(rate_data.keys())
             yields = list(rate_data.values())
             
             fig = go.Figure()
             
-            # Treasury yield curve
             fig.add_trace(go.Scatter(
                 x=maturities,
                 y=yields,
@@ -200,7 +273,6 @@ if analyze_button and ticker:
                 marker=dict(size=8),
             ))
             
-            # Preferred yield as horizontal line
             if yield_pct:
                 fig.add_hline(
                     y=yield_pct,
@@ -250,23 +322,82 @@ if analyze_button and ticker:
     
     st.markdown("---")
     
-    # Row 3: AI Synthesis
-    st.subheader("AI Synthesis (Gemini)")
-    st.markdown(result.get("synthesis", "No synthesis available."))
+    # ---------------------------------------------------------------------------
+    # Dividend Analysis Details
+    # ---------------------------------------------------------------------------
+    
+    if dividend_data.get("has_dividend_history"):
+        st.subheader("Dividend Analysis")
+        
+        div_cols = st.columns(4)
+        
+        with div_cols[0]:
+            st.metric("Total Payments", dividend_data.get("total_payments_recorded", "N/A"))
+        with div_cols[1]:
+            st.metric("Avg Payment", f"${dividend_data.get('avg_payment', 0):.4f}")
+        with div_cols[2]:
+            is_fixed = dividend_data.get("is_fixed_rate", None)
+            st.metric("Rate Type", "Fixed" if is_fixed else "Variable" if is_fixed is not None else "N/A")
+        with div_cols[3]:
+            st.metric("Trend", dividend_data.get("trend", "N/A").replace("_", " ").title())
+        
+        st.caption(
+            f"History from {dividend_data.get('first_payment_date', 'N/A')} "
+            f"to {dividend_data.get('last_payment_date', 'N/A')}. "
+            f"Consistency score: {dividend_data.get('consistency_score', 0):.0%}."
+        )
+        
+        st.markdown("---")
+    
+    # ---------------------------------------------------------------------------
+    # AI Synthesis or Error Report
+    # ---------------------------------------------------------------------------
+    
+    synthesis = result.get("synthesis", "")
+    
+    if quality_report.get("passed", False):
+        st.subheader("AI Synthesis (Gemini)")
+    else:
+        st.subheader("Error Report")
+    
+    st.markdown(synthesis)
     
     st.markdown("---")
     
-    # Row 4: Raw Agent Outputs (expandable)
+    # ---------------------------------------------------------------------------
+    # Quality Check Details (expandable)
+    # ---------------------------------------------------------------------------
+    
+    with st.expander("View Quality Check Details"):
+        checks = quality_report.get("checks", {})
+        
+        qc_cols = st.columns(3)
+        
+        for i, (source, details) in enumerate(checks.items()):
+            with qc_cols[i]:
+                st.subheader(source.replace("_", " ").title())
+                score = details.get("score", 0)
+                st.progress(score, text=f"Score: {score:.0%}")
+                for check_name, check_val in details.items():
+                    if check_name != "score":
+                        icon = "pass" if check_val else "fail"
+                        st.write(f"{'✓' if check_val else '✗'} {check_name.replace('_', ' ').title()}")
+    
+    # ---------------------------------------------------------------------------
+    # Raw Agent Outputs (expandable)
+    # ---------------------------------------------------------------------------
+    
     with st.expander("View Raw Agent Outputs"):
-        raw_col1, raw_col2 = st.columns(2)
+        raw_tabs = st.tabs(["Market Data", "Rate Data", "Dividend Data", "Agent Status"])
         
-        with raw_col1:
-            st.subheader("Market Data Agent Output")
+        with raw_tabs[0]:
             st.json(market_data)
-        
-        with raw_col2:
-            st.subheader("Rate Context Agent Output")
+        with raw_tabs[1]:
             st.json(rate_data)
+        with raw_tabs[2]:
+            st.json(dividend_data)
+        with raw_tabs[3]:
+            st.json(agent_status)
 
 elif not ticker:
     st.info("Enter a preferred stock ticker above and click 'Analyze' to begin.")
