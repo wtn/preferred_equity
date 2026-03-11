@@ -10,5 +10,7 @@ streamlit
 plotly
 sec-downloader
 python-dotenv
+beautifulsoup4
+requests
 pandas
 numpy
