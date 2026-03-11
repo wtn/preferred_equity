@@ -1,7 +1,9 @@
 langgraph
 langchain
+langchain-openai
 langchain-google-genai
 langchain-community
+langchain-core
 yfinance
 fredapi
 streamlit
