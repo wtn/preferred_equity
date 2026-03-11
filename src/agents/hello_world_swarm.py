@@ -15,12 +15,7 @@ import os
 import json
 from typing import TypedDict, Annotated
 from langgraph.graph import StateGraph, END
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
-
-# Use the OpenAI-compatible API key available in the environment
-# This connects to Gemini through the pre-configured endpoint
-from langchain_openai import ChatOpenAI
 
 
 # ---------------------------------------------------------------------------
@@ -92,13 +87,13 @@ def synthesis_agent(state: SwarmState) -> dict:
     into a preliminary preferred equity analysis.
     This is the 'reasoning agent' that uses the LLM.
     """
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from src.utils.config import get_llm
+
     print("[Synthesis Agent] Generating analysis with Gemini...")
 
-    # Initialize the LLM using the OpenAI-compatible API (pre-configured for Gemini)
-    llm = ChatOpenAI(
-        model="gemini-2.5-flash",
-        temperature=0.3,
-    )
+    llm = get_llm(temperature=0.3)
 
     market_data = state["market_data"]
     rate_data = state["rate_data"]
@@ -144,12 +139,10 @@ def build_hello_world_graph() -> StateGraph:
     Constructs the three-agent LangGraph workflow.
     
     Graph structure:
-        START -> market_data_agent --|
-                                     |--> synthesis_agent -> END
-        START -> rate_context_agent -|
+        START -> market_data_agent -> rate_context_agent -> synthesis_agent -> END
     
-    The market data and rate context agents run in PARALLEL (they have no
-    dependencies on each other). The synthesis agent runs AFTER both complete.
+    This is a simple sequential chain for the hello world demo.
+    Parallel execution is demonstrated in advanced_swarm.py.
     """
     workflow = StateGraph(SwarmState)
 
@@ -158,12 +151,8 @@ def build_hello_world_graph() -> StateGraph:
     workflow.add_node("rate_context_agent", rate_context_agent)
     workflow.add_node("synthesis_agent", synthesis_agent)
 
-    # Define edges: both data agents start from the entry point
+    # Define edges: sequential for the hello world version
     workflow.set_entry_point("market_data_agent")
-    
-    # For the hello world version, we run sequentially:
-    # market_data -> rate_context -> synthesis
-    # (Parallel execution will be added in Phase 2 with proper fan-out/fan-in)
     workflow.add_edge("market_data_agent", "rate_context_agent")
     workflow.add_edge("rate_context_agent", "synthesis_agent")
     workflow.add_edge("synthesis_agent", END)

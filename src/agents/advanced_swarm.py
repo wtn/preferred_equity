@@ -35,7 +35,7 @@ import operator
 from typing import TypedDict, Annotated, Literal
 from langgraph.graph import StateGraph, END, START
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+# LLM is provided by the centralized get_llm() factory in config.py
 
 
 def merge_dicts(left: dict, right: dict) -> dict:
@@ -263,7 +263,8 @@ def synthesis_agent(state: AdvancedSwarmState) -> dict:
     """
     print("  [Synthesis Agent] Generating analysis with Gemini...")
 
-    llm = ChatOpenAI(model="gemini-2.5-flash", temperature=0.3)
+    from src.utils.config import get_llm
+    llm = get_llm(temperature=0.3)
 
     market_data = state["market_data"]
     rate_data = state["rate_data"]
