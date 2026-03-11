@@ -6,6 +6,12 @@ Computes dividend consistency, growth patterns, and coverage metrics.
 import pandas as pd
 import yfinance as yf
 from typing import Optional
+import os
+import sys
+
+# Ensure project root is on path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from src.data.market_data import get_dividend_history
 
 
 def analyze_dividend_pattern(ticker: str) -> dict:
@@ -25,10 +31,10 @@ def analyze_dividend_pattern(ticker: str) -> dict:
         Dictionary with dividend pattern analysis
     """
     try:
-        stock = yf.Ticker(ticker)
-        dividends = stock.dividends
+        # Use the robust dividend fetcher that handles ticker variants
+        df = get_dividend_history(ticker)
         
-        if dividends.empty or len(dividends) < 2:
+        if df is None or df.empty or len(df) < 2:
             return {
                 "ticker": ticker,
                 "has_dividend_history": False,
@@ -36,7 +42,6 @@ def analyze_dividend_pattern(ticker: str) -> dict:
             }
         
         # Convert to DataFrame for analysis
-        df = dividends.to_frame(name="amount")
         df.index = pd.to_datetime(df.index)
         
         # Calculate payment intervals
@@ -69,7 +74,7 @@ def analyze_dividend_pattern(ticker: str) -> dict:
             consistency_score = 0.3
         
         # Payment amount analysis
-        amounts = df["amount"]
+        amounts = df["dividend"]
         avg_payment = round(float(amounts.mean()), 4)
         payment_std = round(float(amounts.std()), 4)
         min_payment = round(float(amounts.min()), 4)
@@ -93,12 +98,17 @@ def analyze_dividend_pattern(ticker: str) -> dict:
             trend = "insufficient_history"
         
         # Annual yield calculation from dividends
-        annual_dividends = float(amounts.tail(4).sum()) if frequency == "quarterly" else float(amounts.tail(12).sum()) if frequency == "monthly" else float(amounts.tail(1).sum())
+        if frequency == "quarterly":
+            annual_dividends = float(amounts.tail(4).sum())
+        elif frequency == "monthly":
+            annual_dividends = float(amounts.tail(12).sum())
+        else:
+            annual_dividends = float(amounts.tail(1).sum())
         
         return {
             "ticker": ticker,
             "has_dividend_history": True,
-            "total_payments_recorded": len(dividends),
+            "total_payments_recorded": len(df),
             "first_payment_date": str(df.index[0].date()),
             "last_payment_date": str(df.index[-1].date()),
             "frequency": frequency,
