@@ -28,8 +28,14 @@ Usage:
 """
 
 import json
+import os
 import re
+import sys
 from typing import Any, Dict, Optional
+
+# Allow direct script execution via:
+#   python3 src/agents/prospectus_agent.py JPM-PD
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.utils.config import get_llm
 
