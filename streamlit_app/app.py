@@ -3,6 +3,7 @@ Preferred Equity Analysis Swarm: Streamlit Demo
 =================================================
 A web interface for the multi-agent preferred equity analysis system.
 Demonstrates parallel execution, conditional routing, and quality gating.
+Phase 3: Full analytical swarm with 12 agent nodes across 5 layers.
 """
 
 import sys
@@ -48,50 +49,57 @@ st.set_page_config(
 with st.sidebar:
     st.title("Preferred Equity Swarm")
     st.caption("MSBA Capstone Project")
-    
+
     st.markdown("---")
-    
+
     st.subheader("About")
     st.write(
         "This demo showcases a multi-agent AI swarm that analyzes "
         "preferred equity securities. The swarm coordinates specialized "
-        "agents running in parallel, combining live market data with SEC "
-        "prospectus extraction before a quality gate determines whether "
-        "data is sufficient for AI synthesis."
+        "agents running in parallel across three layers, combining live "
+        "market data with SEC prospectus extraction, call probability, "
+        "tax analysis, regulatory risk, and relative value before a "
+        "quality gate determines whether data is sufficient for AI synthesis."
     )
-    
+
     st.markdown("---")
-    
+
     st.subheader("Swarm Architecture")
     st.markdown("""
-    **Data Agents (Parallel):**
+    **Layer 1: Data Collection (Parallel)**
     1. Market Data Agent
     2. Rate Context Agent
     3. Dividend Analysis Agent
     4. Prospectus Parsing Agent
 
-    **Deterministic Analysis:**
+    **Layer 2: Deterministic Analysis**
     5. Interest Rate Sensitivity Agent
 
-    **Quality Gate:**
-    6. Quality Check Agent
+    **Layer 3: Analytical Agents (Parallel)**
+    6. Call Probability Agent
+    7. Tax & Yield Agent
+    8. Regulatory & Sector Agent
+    9. Relative Value Agent
 
-    **Conditional Routing:**
-    7a. Synthesis Agent (Gemini) *or*
-    7b. Error Report Agent
+    **Layer 4: Quality Gate**
+    10. Quality Check Agent
+
+    **Layer 5: Conditional Routing**
+    11a. Synthesis Agent (Gemini) *or*
+    11b. Error Report Agent
     """)
-    
+
     st.markdown("---")
-    
+
     st.subheader("LangGraph Patterns")
     st.markdown("""
-    **Fan-Out:** 4 data agents run in parallel from START
+    **Fan-Out:** 4 data agents run in parallel from START, then 4 analytical agents run in parallel from Layer 2
 
-    **Fan-In:** Results feed the Interest Rate Sensitivity Agent, then Quality Check
+    **Fan-In:** Layer 1 feeds Layer 2, Layer 3 feeds Quality Gate
 
     **Conditional Edge:** Routes to Synthesis or Error based on data quality score
     """)
-    
+
     st.markdown("---")
     st.subheader("Quick Analysis")
     st.write(
@@ -113,7 +121,7 @@ with st.sidebar:
         st.dataframe(inventory_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.caption("Phase 2: Vertical Slice Prototype")
+    st.caption("Phase 3: Full Analytical Swarm")
 
 
 # ---------------------------------------------------------------------------
@@ -169,22 +177,19 @@ st.markdown("---")
 if analyze_button and ticker:
     # Agent execution with progress tracking
     progress_container = st.container()
-    
+
     with progress_container:
         st.subheader(f"Analyzing: {ticker}")
-        
-        # Progress bar and status
+
         progress_bar = st.progress(0, text="Initializing swarm...")
         status_placeholder = st.empty()
-        
-        # Run the swarm
+
         try:
-            status_placeholder.info("Running 4 data agents in parallel, then dynamic rate sensitivity...")
-            progress_bar.progress(10, text="Data agents running in parallel, then dynamic rate sensitivity...")
-            
+            status_placeholder.info("Running Layer 1 (data collection), Layer 2 (rate sensitivity), Layer 3 (analytical agents)...")
+            progress_bar.progress(10, text="Agents running across 3 layers...")
+
             result = analyze_preferred_advanced(ticker)
-            
-            # Check quality outcome
+
             quality = result.get("quality_report", {})
             if quality.get("passed", False):
                 progress_bar.progress(100, text="Analysis complete!")
@@ -198,35 +203,37 @@ if analyze_button and ticker:
                     f"Quality score: {quality.get('overall_score', 0):.0%} (below threshold). "
                     f"Route: Error Report Agent."
                 )
-            
+
         except Exception as e:
             st.error(f"Analysis failed: {str(e)}")
             st.stop()
-    
+
     st.markdown("---")
-    
+
     # ---------------------------------------------------------------------------
     # Agent Status Dashboard
     # ---------------------------------------------------------------------------
-    
+
     st.subheader("Agent Execution Status")
-    
+
     agent_status = result.get("agent_status", {})
     quality_report = result.get("quality_report", {})
     prospectus_terms = result.get("prospectus_terms", {})
-    
-    status_cols = st.columns(7)
-    
-    agent_labels = [
+
+    # Row 1: Layer 1 + Layer 2 agents
+    st.caption("Layer 1 (Data Collection) + Layer 2 (Analysis)")
+    status_cols_1 = st.columns(7)
+
+    agent_labels_1 = [
         ("market_data", "Market Data"),
         ("rate_context", "Rate Context"),
-        ("dividend", "Dividend Analysis"),
+        ("dividend", "Dividend"),
         ("prospectus", "Prospectus"),
         ("interest_rate", "Rate Sensitivity"),
     ]
-    
-    for i, (key, label) in enumerate(agent_labels):
-        with status_cols[i]:
+
+    for i, (key, label) in enumerate(agent_labels_1):
+        with status_cols_1[i]:
             status = agent_status.get(key, "unknown")
             if status == "success":
                 st.metric(label, "OK", delta="success", delta_color="normal")
@@ -234,8 +241,8 @@ if analyze_button and ticker:
                 st.metric(label, "FAIL", delta="failed", delta_color="inverse")
             else:
                 st.metric(label, "?", delta="unknown", delta_color="off")
-    
-    with status_cols[5]:
+
+    with status_cols_1[5]:
         qscore = quality_report.get("overall_score", 0)
         passed = quality_report.get("passed", False)
         st.metric(
@@ -244,37 +251,62 @@ if analyze_button and ticker:
             delta="passed" if passed else "failed",
             delta_color="normal" if passed else "inverse"
         )
-    
-    with status_cols[6]:
+
+    with status_cols_1[6]:
         route = quality_report.get("decision", "unknown")
         if route == "proceed_to_synthesis":
             st.metric("Route Taken", "Synthesis", delta="AI analysis", delta_color="normal")
         else:
             st.metric("Route Taken", "Error Report", delta="fallback", delta_color="inverse")
-    
+
+    # Row 2: Layer 3 agents
+    st.caption("Layer 3 (Analytical Agents)")
+    status_cols_2 = st.columns(4)
+
+    agent_labels_2 = [
+        ("call_probability", "Call Probability"),
+        ("tax_yield", "Tax & Yield"),
+        ("regulatory", "Regulatory"),
+        ("relative_value", "Relative Value"),
+    ]
+
+    for i, (key, label) in enumerate(agent_labels_2):
+        with status_cols_2[i]:
+            status = agent_status.get(key, "unknown")
+            if status == "success":
+                st.metric(label, "OK", delta="success", delta_color="normal")
+            elif status == "failed":
+                st.metric(label, "FAIL", delta="failed", delta_color="inverse")
+            else:
+                st.metric(label, "?", delta="unknown", delta_color="off")
+
     st.markdown("---")
-    
+
     # ---------------------------------------------------------------------------
     # Key Metrics
     # ---------------------------------------------------------------------------
-    
+
     market_data = result.get("market_data", {})
     rate_data = result.get("rate_data", {})
     rate_sensitivity = result.get("rate_sensitivity", {})
     dividend_data = result.get("dividend_data", {})
-    
+    call_analysis = result.get("call_analysis", {})
+    tax_analysis = result.get("tax_analysis", {})
+    regulatory_analysis = result.get("regulatory_analysis", {})
+    relative_value = result.get("relative_value", {})
+
     st.subheader("Key Metrics")
-    
+
     metric_cols = st.columns(5)
-    
+
     with metric_cols[0]:
         price = market_data.get("price", None)
         st.metric("Current Price", f"${price:,.2f}" if isinstance(price, (int, float)) else "N/A")
-    
+
     with metric_cols[1]:
         div_rate = market_data.get("dividend_rate", None)
         st.metric("Annual Dividend", f"${div_rate:,.2f}" if div_rate else "N/A")
-    
+
     with metric_cols[2]:
         div_yield = market_data.get("dividend_yield", None)
         if div_yield:
@@ -283,7 +315,7 @@ if analyze_button and ticker:
         else:
             yield_pct = None
             st.metric("Current Yield", "N/A")
-    
+
     with metric_cols[3]:
         ten_yr = rate_data.get("10Y", rate_data.get("20Y", None))
         if ten_yr and yield_pct:
@@ -291,13 +323,64 @@ if analyze_button and ticker:
             st.metric("Spread vs Treasury", f"{spread:.0f} bps")
         else:
             st.metric("Spread vs Treasury", "N/A")
-    
+
     with metric_cols[4]:
         consistency = dividend_data.get("consistency", "N/A")
         frequency = dividend_data.get("frequency", "N/A")
         st.metric("Dividend Pattern", f"{frequency.title()}", delta=consistency, delta_color="normal" if consistency in ("excellent", "good") else "off")
-    
+
     st.markdown("---")
+
+    # ---------------------------------------------------------------------------
+    # Call Risk Analysis (Phase 3)
+    # ---------------------------------------------------------------------------
+
+    if call_analysis and call_analysis.get("call_probability") is not None:
+        st.subheader("Call Risk Analysis")
+
+        call_cols = st.columns(5)
+
+        with call_cols[0]:
+            prob = str(call_analysis.get("call_probability", "N/A")).replace("_", " ").title()
+            score = call_analysis.get("call_probability_score")
+            st.metric("Call Probability", prob, delta=f"score: {score:.2f}" if score is not None else None)
+
+        with call_cols[1]:
+            ytc = call_analysis.get("yield_to_call_pct")
+            st.metric("Yield-to-Call", f"{ytc:.2f}%" if isinstance(ytc, (int, float)) else "N/A")
+
+        with call_cols[2]:
+            ytw = call_analysis.get("yield_to_worst_pct")
+            st.metric("Yield-to-Worst", f"{ytw:.2f}%" if isinstance(ytw, (int, float)) else "N/A")
+
+        with call_cols[3]:
+            years = call_analysis.get("years_to_call")
+            if years is not None and years > 0:
+                st.metric("Years to Call", f"{years:.1f}")
+            elif years is not None and years <= 0:
+                st.metric("Years to Call", "Currently Callable")
+            else:
+                st.metric("Years to Call", "N/A")
+
+        with call_cols[4]:
+            incentive = str(call_analysis.get("refinancing_incentive", "N/A")).replace("_", " ").title()
+            st.metric("Refinancing Incentive", incentive)
+
+        premium = call_analysis.get("premium_to_call_pct")
+        if premium is not None:
+            call_price = call_analysis.get("call_price_per_share")
+            if premium > 0:
+                st.caption(f"Trading at a {premium:.1f}% premium to the ${call_price:.2f} call price.")
+            elif premium < 0:
+                st.caption(f"Trading at a {abs(premium):.1f}% discount to the ${call_price:.2f} call price.")
+            else:
+                st.caption(f"Trading at the ${call_price:.2f} call price.")
+
+        if call_analysis.get("call_analysis_summary"):
+            with st.expander("Call Analysis Detail"):
+                st.write(call_analysis["call_analysis_summary"])
+
+        st.markdown("---")
 
     # ---------------------------------------------------------------------------
     # Interest Rate Sensitivity
@@ -345,8 +428,6 @@ if analyze_button and ticker:
 
         if rate_sensitivity.get("summary"):
             st.caption(rate_sensitivity["summary"])
-        if rate_sensitivity.get("methodology"):
-            st.caption(rate_sensitivity["methodology"])
         if rate_sensitivity.get("benchmark_note"):
             st.caption(f"Note: {rate_sensitivity['benchmark_note']}")
 
@@ -442,22 +523,171 @@ if analyze_button and ticker:
         st.subheader("Interest Rate Sensitivity")
         st.warning(rate_sensitivity["error"])
         st.markdown("---")
-    
+
+    # ---------------------------------------------------------------------------
+    # Tax and Yield Profile (Phase 3)
+    # ---------------------------------------------------------------------------
+
+    if tax_analysis and tax_analysis.get("qdi_eligible") is not None:
+        st.subheader("Tax and Yield Profile")
+
+        tax_cols = st.columns(5)
+
+        with tax_cols[0]:
+            qdi = tax_analysis.get("qdi_eligible")
+            if qdi is True:
+                qdi_text = "QDI Eligible"
+                qdi_delta = "qualified"
+            elif qdi is False:
+                qdi_text = "Not QDI"
+                qdi_delta = "ordinary income"
+            else:
+                qdi_text = "Unknown"
+                qdi_delta = "not determined"
+            st.metric("QDI Status", qdi_text, delta=qdi_delta, delta_color="normal" if qdi else "off")
+
+        with tax_cols[1]:
+            after_tax = tax_analysis.get("after_tax_yield_pct")
+            st.metric("After-Tax Yield", f"{after_tax:.2f}%" if isinstance(after_tax, (int, float)) else "N/A")
+
+        with tax_cols[2]:
+            tey = tax_analysis.get("tax_equivalent_yield_pct")
+            st.metric("Tax-Equivalent Yield", f"{tey:.2f}%" if isinstance(tey, (int, float)) else "N/A")
+
+        with tax_cols[3]:
+            eff_rate = tax_analysis.get("effective_tax_rate_pct")
+            st.metric("Effective Tax Rate", f"{eff_rate:.1f}%" if isinstance(eff_rate, (int, float)) else "N/A")
+
+        with tax_cols[4]:
+            advantage = tax_analysis.get("tax_advantage_bps", 0)
+            st.metric("QDI Advantage", f"{advantage:.0f} bps" if advantage else "N/A")
+
+        if tax_analysis.get("qdi_classification_reason"):
+            st.caption(tax_analysis["qdi_classification_reason"])
+
+        if tax_analysis.get("tax_summary"):
+            with st.expander("Tax Analysis Detail"):
+                st.write(tax_analysis["tax_summary"])
+
+        st.markdown("---")
+
+    # ---------------------------------------------------------------------------
+    # Regulatory and Sector Risk (Phase 3)
+    # ---------------------------------------------------------------------------
+
+    if regulatory_analysis and regulatory_analysis.get("sector") is not None:
+        st.subheader("Regulatory and Sector Risk")
+
+        reg_cols = st.columns(5)
+
+        with reg_cols[0]:
+            sector = str(regulatory_analysis.get("sector", "N/A")).title()
+            st.metric("Sector", sector)
+
+        with reg_cols[1]:
+            is_gsib = regulatory_analysis.get("is_gsib", False)
+            gsib_text = "Yes" if is_gsib else "No"
+            bucket = regulatory_analysis.get("gsib_bucket")
+            gsib_delta = f"Bucket {bucket}" if bucket else None
+            st.metric("G-SIB", gsib_text, delta=gsib_delta)
+
+        with reg_cols[2]:
+            capital = str(regulatory_analysis.get("capital_treatment", "N/A")).upper()
+            st.metric("Capital Treatment", capital)
+
+        with reg_cols[3]:
+            risk_level = str(regulatory_analysis.get("regulatory_risk_level", "N/A")).replace("_", " ").title()
+            st.metric("Regulatory Risk", risk_level)
+
+        with reg_cols[4]:
+            deferral = str(regulatory_analysis.get("dividend_deferral_risk", "N/A")).replace("_", " ").title()
+            st.metric("Deferral Risk", deferral)
+
+        min_cet1 = regulatory_analysis.get("minimum_cet1_pct")
+        if min_cet1 is not None:
+            st.caption(f"Estimated minimum CET1 requirement: {min_cet1:.1f}%")
+
+        if regulatory_analysis.get("stress_test_context"):
+            with st.expander("Stress Test Context"):
+                st.write(regulatory_analysis["stress_test_context"])
+
+        if regulatory_analysis.get("regulatory_summary"):
+            with st.expander("Regulatory Analysis Detail"):
+                st.write(regulatory_analysis["regulatory_summary"])
+
+        st.markdown("---")
+
+    # ---------------------------------------------------------------------------
+    # Relative Value (Phase 3)
+    # ---------------------------------------------------------------------------
+
+    if relative_value and relative_value.get("value_assessment") is not None:
+        st.subheader("Relative Value")
+
+        rv_cols = st.columns(5)
+
+        with rv_cols[0]:
+            value = str(relative_value.get("value_assessment", "N/A")).title()
+            st.metric("Value Assessment", value)
+
+        with rv_cols[1]:
+            peer_count = relative_value.get("peer_count", 0)
+            rank = relative_value.get("yield_rank")
+            rank_text = f"#{rank} of {peer_count}" if rank else "N/A"
+            st.metric("Yield Rank", rank_text)
+
+        with rv_cols[2]:
+            spread_tsy = relative_value.get("spread_to_treasury_bps")
+            st.metric("Spread to Treasury", f"{spread_tsy:.0f} bps" if spread_tsy is not None else "N/A")
+
+        with rv_cols[3]:
+            spread_common = relative_value.get("spread_to_common_bps")
+            st.metric("Spread to Common", f"{spread_common:.0f} bps" if spread_common is not None else "N/A")
+
+        with rv_cols[4]:
+            common_yield = relative_value.get("common_dividend_yield_pct")
+            st.metric("Common Div Yield", f"{common_yield:.2f}%" if isinstance(common_yield, (int, float)) else "N/A")
+
+        # Peer comparison table
+        peers = relative_value.get("peer_universe", [])
+        if peers:
+            st.markdown("**Peer Comparison**")
+            peer_df = pd.DataFrame(
+                [
+                    {
+                        "Ticker": p.get("ticker", "N/A"),
+                        "Issuer": p.get("issuer", "N/A"),
+                        "Coupon": f"{p['coupon_rate']:.2f}%" if p.get("coupon_rate") is not None else "N/A",
+                        "Type": str(p.get("coupon_type", "N/A")).title(),
+                        "Cumulative": "Yes" if p.get("cumulative") else "No" if p.get("cumulative") is False else "N/A",
+                        "Relationship": p.get("relationship", "N/A"),
+                    }
+                    for p in peers
+                ]
+            )
+            st.dataframe(peer_df, use_container_width=True, hide_index=True)
+
+        if relative_value.get("relative_value_summary"):
+            with st.expander("Relative Value Detail"):
+                st.write(relative_value["relative_value_summary"])
+
+        st.markdown("---")
+
     # ---------------------------------------------------------------------------
     # Charts Row
     # ---------------------------------------------------------------------------
-    
+
     chart_col1, chart_col2 = st.columns(2)
-    
+
     with chart_col1:
         st.subheader("Treasury Yield Curve vs Preferred Yield")
-        
+
         if rate_data:
             maturities = list(rate_data.keys())
             yields = list(rate_data.values())
-            
+
             fig = go.Figure()
-            
+
             fig.add_trace(go.Scatter(
                 x=maturities,
                 y=yields,
@@ -466,7 +696,7 @@ if analyze_button and ticker:
                 line=dict(color='#1f77b4', width=2),
                 marker=dict(size=8),
             ))
-            
+
             if yield_pct:
                 fig.add_hline(
                     y=yield_pct,
@@ -475,7 +705,7 @@ if analyze_button and ticker:
                     annotation_text=f"{ticker} Yield: {yield_pct:.2f}%",
                     annotation_position="top right",
                 )
-            
+
             fig.update_layout(
                 xaxis_title="Maturity",
                 yaxis_title="Yield (%)",
@@ -483,16 +713,16 @@ if analyze_button and ticker:
                 template="plotly_white",
                 showlegend=True,
             )
-            
+
             st.plotly_chart(fig, use_container_width=True)
-    
+
     with chart_col2:
         st.subheader("Price History (1 Year)")
-        
+
         price_hist = get_price_history(ticker, period="1y")
         if price_hist is not None and not price_hist.empty:
             fig2 = go.Figure()
-            
+
             fig2.add_trace(go.Scatter(
                 x=price_hist.index,
                 y=price_hist["Close"],
@@ -502,29 +732,29 @@ if analyze_button and ticker:
                 fill='tozeroy',
                 fillcolor='rgba(44, 160, 44, 0.1)',
             ))
-            
+
             fig2.update_layout(
                 xaxis_title="Date",
                 yaxis_title="Price ($)",
                 height=400,
                 template="plotly_white",
             )
-            
+
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("Price history not available for this ticker.")
-    
+
     st.markdown("---")
-    
+
     # ---------------------------------------------------------------------------
     # Dividend Analysis Details
     # ---------------------------------------------------------------------------
-    
+
     if dividend_data.get("has_dividend_history"):
         st.subheader("Dividend Analysis")
-        
+
         div_cols = st.columns(4)
-        
+
         with div_cols[0]:
             st.metric("Total Payments", dividend_data.get("total_payments_recorded", "N/A"))
         with div_cols[1]:
@@ -534,13 +764,13 @@ if analyze_button and ticker:
             st.metric("Rate Type", "Fixed" if is_fixed else "Variable" if is_fixed is not None else "N/A")
         with div_cols[3]:
             st.metric("Trend", dividend_data.get("trend", "N/A").replace("_", " ").title())
-        
+
         st.caption(
             f"History from {dividend_data.get('first_payment_date', 'N/A')} "
             f"to {dividend_data.get('last_payment_date', 'N/A')}. "
             f"Consistency score: {dividend_data.get('consistency_score', 0):.0%}."
         )
-        
+
         st.markdown("---")
 
     # ---------------------------------------------------------------------------
@@ -608,48 +838,54 @@ if analyze_button and ticker:
         st.subheader("Prospectus Terms (SEC)")
         st.warning(prospectus_terms["error"])
         st.markdown("---")
-    
+
     # ---------------------------------------------------------------------------
     # AI Synthesis or Error Report
     # ---------------------------------------------------------------------------
-    
+
     synthesis = result.get("synthesis", "")
-    
+
     if quality_report.get("passed", False):
         st.subheader("AI Synthesis (Gemini)")
     else:
         st.subheader("Error Report")
-    
+
     st.markdown(synthesis)
-    
+
     st.markdown("---")
-    
+
     # ---------------------------------------------------------------------------
     # Quality Check Details (expandable)
     # ---------------------------------------------------------------------------
-    
+
     with st.expander("View Quality Check Details"):
         checks = quality_report.get("checks", {})
-        
-        qc_cols = st.columns(max(len(checks), 1))
-        
-        for i, (source, details) in enumerate(checks.items()):
-            with qc_cols[i]:
-                st.subheader(source.replace("_", " ").title())
-                score = details.get("score", 0)
-                st.progress(score, text=f"Score: {score:.0%}")
-                for check_name, check_val in details.items():
-                    if check_name != "score":
-                        icon = "pass" if check_val else "fail"
-                        st.write(f"{'✓' if check_val else '✗'} {check_name.replace('_', ' ').title()}")
-    
+
+        # Display in rows of 4 to handle the expanded check set
+        check_items = list(checks.items())
+        for row_start in range(0, len(check_items), 4):
+            row_items = check_items[row_start:row_start + 4]
+            qc_cols = st.columns(len(row_items))
+            for i, (source, details) in enumerate(row_items):
+                with qc_cols[i]:
+                    st.markdown(f"**{source.replace('_', ' ').title()}**")
+                    score = details.get("score", 0)
+                    st.progress(score, text=f"Score: {score:.0%}")
+                    for check_name, check_val in details.items():
+                        if check_name != "score":
+                            st.write(f"{'✓' if check_val else '✗'} {check_name.replace('_', ' ').title()}")
+
     # ---------------------------------------------------------------------------
     # Raw Agent Outputs (expandable)
     # ---------------------------------------------------------------------------
-    
+
     with st.expander("View Raw Agent Outputs"):
-        raw_tabs = st.tabs(["Market Data", "Rate Data", "Rate Sensitivity", "Dividend Data", "Prospectus Terms", "Agent Status"])
-        
+        raw_tabs = st.tabs([
+            "Market Data", "Rate Data", "Rate Sensitivity", "Dividend Data",
+            "Prospectus Terms", "Call Analysis", "Tax Analysis",
+            "Regulatory Analysis", "Relative Value", "Agent Status",
+        ])
+
         with raw_tabs[0]:
             st.json(market_data)
         with raw_tabs[1]:
@@ -661,6 +897,14 @@ if analyze_button and ticker:
         with raw_tabs[4]:
             st.json(prospectus_terms)
         with raw_tabs[5]:
+            st.json(call_analysis)
+        with raw_tabs[6]:
+            st.json(tax_analysis)
+        with raw_tabs[7]:
+            st.json(regulatory_analysis)
+        with raw_tabs[8]:
+            st.json(relative_value)
+        with raw_tabs[9]:
             st.json(agent_status)
 
 elif not ticker:

@@ -59,24 +59,38 @@ cd preferred-equity-swarm
 streamlit run streamlit_app/app.py
 ```
 
-## Current Status: Phase 2 Completed
+## Current Status: Phase 3 Completed
 
-The project has successfully completed Phase 2, delivering a robust vertical slice of the swarm architecture.
+The project has successfully completed Phase 3, expanding the swarm to 12 agent nodes operating across 5 distinct layers.
 
 ### Completed Capabilities
-*   **EDGAR Pipeline:** A full data layer that searches and downloads prospectus supplements from the SEC EDGAR database.
-*   **Prospectus Parsing Agent:** A staged extraction pipeline that uses deterministic parsing for standard terms and falls back to Gemini for complex legal language. It includes a cache-first approach for rapid demo execution.
+
+**Layer 1: Parallel Data Collection**
 *   **Market Data Agent:** Fetches real-time pricing and dividend data.
-*   **Rate Context Agent:** Pulls live Treasury yield curves and SOFR benchmark rates. It includes sophisticated logic to handle the transition from LIBOR to SOFR for legacy floating-rate securities.
+*   **Rate Context Agent:** Pulls live Treasury yield curves and SOFR benchmark rates.
 *   **Dividend Analysis Agent:** Computes dividend consistency, payment frequency, and trailing yield.
-*   **Synthesis Agent:** Synthesizes the outputs of all data agents into a professional, institutional-grade research note.
-*   **Orchestration:** A LangGraph workflow featuring parallel execution, quality gating, and conditional routing.
-*   **User Interface:** A polished Streamlit dashboard that visualizes yield curves, price history, and the newly added benchmark context for floating-rate securities.
+*   **Prospectus Parsing Agent:** A staged extraction pipeline that uses deterministic parsing for standard terms and falls back to Gemini for complex legal language.
 
-## Next Phase: Phase 3 (Advanced Agents)
+**Layer 2: Deterministic Analysis**
+*   **Interest Rate Sensitivity Agent:** Computes duration, DV01, and handles the transition from LIBOR to SOFR for legacy floating-rate securities.
 
-The upcoming phase will expand the swarm from four agents to eight, adding the following capabilities:
-1.  **Call Probability Agent:** To estimate the likelihood of early redemption based on rate environments.
-2.  **Tax and Yield Agent:** To classify Qualified Dividend Income eligibility.
-3.  **Regulatory and Sector Agent:** To monitor bank capital requirements.
-4.  **Relative Value Agent:** To rank securities against peers.
+**Layer 3: Parallel Analytical Agents (Phase 3 additions)**
+*   **Call Probability Agent:** Estimates yield-to-call, yield-to-worst, and heuristic call probability based on refinancing incentives and premium to par.
+*   **Tax and Yield Agent:** Classifies Qualified Dividend Income (QDI) eligibility and computes tax-equivalent yields.
+*   **Regulatory and Sector Agent:** Assesses Basel III/IV AT1 capital treatment, G-SIB surcharges, and dividend deferral risk.
+*   **Relative Value Agent:** Ranks the security against peers by yield, spread to Treasury, and structure.
+
+**Layer 4 & 5: Routing and Synthesis**
+*   **Quality Gate:** Evaluates the outputs of all 8 upstream agents to determine if the data is sufficient for synthesis.
+*   **Synthesis Agent:** Synthesizes the outputs into a professional, institutional-grade research note.
+*   **Error Report Agent:** Generates a structured diagnostic report if the quality gate fails.
+
+**User Interface**
+*   A polished Streamlit dashboard that visualizes yield curves, price history, benchmark context, and the outputs of all Phase 3 analytical agents.
+
+## Next Phase: Phase 4 (Orchestration & Refinement)
+
+The upcoming final phase will focus on:
+1.  **Orchestrator Agent:** Adding a supervisor node for workflow management and conflict resolution.
+2.  **Portfolio Analysis:** Expanding the swarm to analyze multiple securities simultaneously.
+3.  **Final Polish:** Optimizing prompts, token usage, and UI presentation for the final Capstone deliverable.

@@ -1,6 +1,10 @@
 """
 Configuration module for the Preferred Equity Analysis Swarm.
 Loads environment variables and provides shared settings.
+
+LLM priority:
+  1. Google Gemini via GOOGLE_API_KEY (primary)
+  2. OpenAI-compatible API via OPENAI_API_KEY (fallback)
 """
 
 import os
@@ -11,6 +15,10 @@ load_dotenv()
 # LLM Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")  # leave empty to use default
 
 # SEC EDGAR Configuration
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "PreferredEquitySwarm research@example.com")
@@ -29,28 +37,46 @@ UNIVERSE_DIR = os.path.join(DATA_DIR, "universe")
 def get_llm(temperature: float = 0.3):
     """
     Factory function that returns the configured LLM instance.
-    
-    Uses ChatGoogleGenerativeAI which connects directly to Google's API
-    using your GOOGLE_API_KEY. This works with any Gemini model available
-    in Google AI Studio.
-    
+
+    Priority:
+      1. If GOOGLE_API_KEY is set, uses ChatGoogleGenerativeAI (Gemini).
+      2. If OPENAI_API_KEY is set, uses ChatOpenAI (OpenAI-compatible API).
+      3. Raises ValueError if neither key is available.
+
     Args:
         temperature: Controls randomness in responses (0.0 to 1.0).
                      Lower values are more deterministic.
-    
+
     Returns:
-        A LangChain chat model instance configured for Gemini.
+        A LangChain chat model instance.
     """
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    
-    if not GOOGLE_API_KEY:
-        raise ValueError(
-            "GOOGLE_API_KEY is not set. Please add it to your .env file.\n"
-            "You can get a key from https://aistudio.google.com/apikey"
+    # Primary: Google Gemini
+    if GOOGLE_API_KEY:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        return ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            google_api_key=GOOGLE_API_KEY,
+            temperature=temperature,
         )
-    
-    return ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        google_api_key=GOOGLE_API_KEY,
-        temperature=temperature,
+
+    # Fallback: OpenAI-compatible API
+    if OPENAI_API_KEY:
+        from langchain_openai import ChatOpenAI
+
+        kwargs = {
+            "model": OPENAI_MODEL,
+            "api_key": OPENAI_API_KEY,
+            "temperature": temperature,
+        }
+        if OPENAI_BASE_URL:
+            kwargs["base_url"] = OPENAI_BASE_URL
+
+        return ChatOpenAI(**kwargs)
+
+    raise ValueError(
+        "No LLM API key is configured. Set either GOOGLE_API_KEY or "
+        "OPENAI_API_KEY in your .env file.\n"
+        "  Google: https://aistudio.google.com/apikey\n"
+        "  OpenAI: https://platform.openai.com/api-keys"
     )
