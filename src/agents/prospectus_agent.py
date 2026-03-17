@@ -214,24 +214,22 @@ def prospectus_agent_node(state: dict) -> dict:
 
     Writes to state:
         - prospectus_terms: dict (extracted terms)
-        - agent_status: list (appends status message)
+        - agent_status: dict (records success or failure under "prospectus")
         - errors: list (appends error if extraction fails)
     """
     ticker = state.get("ticker", "")
     prospectus_text = state.get("prospectus_text", "")
     filing = state.get("prospectus_filing", {})
 
-    status_updates = []
+    status_updates = {}
     error_updates = []
 
     if prospectus_text:
         # Text already provided, just extract
         terms = extract_terms_from_text(prospectus_text, ticker=ticker)
-        status_updates.append(f"Prospectus Agent: Extracted terms from provided text")
     elif filing:
         # Download and extract from filing
         terms = extract_terms(filing)
-        status_updates.append(f"Prospectus Agent: Downloaded and extracted terms from EDGAR filing")
     else:
         # Need to search EDGAR for the filing first
         from src.data.edgar_pipeline import fetch_preferred_prospectus
@@ -239,21 +237,25 @@ def prospectus_agent_node(state: dict) -> dict:
 
         if text:
             terms = extract_terms_from_text(text, ticker=ticker)
-            status_updates.append(
-                f"Prospectus Agent: Found {len(filings)} filings on EDGAR, "
-                f"extracted terms from best match"
-            )
+            if filings:
+                best_filing = filings[0]
+                terms.setdefault("accession_number", best_filing.get("accession_number", ""))
+                terms.setdefault("filing_date", best_filing.get("filing_date", ""))
+                terms.setdefault("filing_url", best_filing.get("url", ""))
+                terms.setdefault("issuer_cik", best_filing.get("issuer_cik", ""))
         else:
             terms = {
                 "error": f"No prospectus found for {ticker} on EDGAR",
                 "ticker": ticker,
                 "confidence_score": 0.0,
             }
-            error_updates.append(f"Prospectus Agent: No prospectus found for {ticker}")
 
     # Check for extraction errors
     if terms.get("error"):
         error_updates.append(f"Prospectus Agent: {terms['error']}")
+        status_updates["prospectus"] = "failed"
+    else:
+        status_updates["prospectus"] = "success"
 
     return {
         "prospectus_terms": terms,

@@ -4,7 +4,7 @@ Advanced Preferred Equity Swarm
 Demonstrates three key LangGraph patterns beyond the hello world version:
 
 1. PARALLEL FAN-OUT / FAN-IN:
-   Three data agents run simultaneously, then converge at a single point.
+   Four data agents run simultaneously, then converge at a single point.
 
 2. CONDITIONAL ROUTING:
    A quality-check agent inspects the collected data and routes to either
@@ -32,6 +32,7 @@ import os
 import sys
 import json
 import operator
+import re
 from typing import TypedDict, Annotated, Literal
 from langgraph.graph import StateGraph, END, START
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -48,6 +49,53 @@ def merge_dicts(left: dict, right: dict) -> dict:
 def merge_lists(left: list, right: list) -> list:
     """Reducer that concatenates two lists. Used for concurrent error accumulation."""
     return left + right
+
+
+def _coerce_float(value):
+    """Convert strings or numeric-like values to float when possible."""
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_fraction_to_float(text: str):
+    """Parse strings like '1/400th' into 0.0025."""
+    if not isinstance(text, str):
+        return None
+
+    match = re.search(r"(\d+)\s*/\s*(\d+)", text)
+    if not match:
+        return None
+
+    numerator = int(match.group(1))
+    denominator = int(match.group(2))
+    if denominator == 0:
+        return None
+
+    return numerator / denominator
+
+
+def _normalize_prospectus_amount(amount, prospectus_terms: dict):
+    """
+    Convert underlying preferred amounts to depositary-share equivalents when possible.
+
+    Many bank preferreds are issued as depositary shares representing a fraction of
+    a $10,000 liquidation preference share. The UI and market data, however, are in
+    per-depositary-share prices. This helper aligns those units for cleaner analysis.
+    """
+    base_amount = _coerce_float(amount)
+    if base_amount is None:
+        return None
+
+    if prospectus_terms.get("deposit_shares"):
+        fraction = _parse_fraction_to_float(prospectus_terms.get("deposit_fraction"))
+        if fraction:
+            return round(base_amount * fraction, 4)
+
+    return round(base_amount, 4)
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -72,6 +120,7 @@ class AdvancedSwarmState(TypedDict):
     market_data: dict
     rate_data: dict
     dividend_data: dict
+    prospectus_terms: dict
     quality_report: dict
     synthesis: str
     errors: Annotated[list, merge_lists]            # Concurrent error accumulation
@@ -158,7 +207,30 @@ def dividend_agent(state: AdvancedSwarmState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Agent 4: Quality Check Agent (Conditional Router) -- NEW PATTERN
+# Agent 4: Prospectus Parsing Agent (Tool + LLM Agent)
+# ---------------------------------------------------------------------------
+
+def prospectus_agent(state: AdvancedSwarmState) -> dict:
+    """Search EDGAR, download the best filing, and extract structured prospectus terms."""
+    from src.agents.prospectus_agent import prospectus_agent_node
+
+    ticker = state["ticker"]
+    print(f"  [Prospectus Agent] Searching EDGAR and extracting terms for {ticker}...")
+
+    result = prospectus_agent_node(state)
+    terms = result.get("prospectus_terms", {})
+
+    if terms.get("error"):
+        print(f"  [Prospectus Agent] FAILED: {terms['error']}")
+    else:
+        security_name = terms.get("security_name") or terms.get("series") or "prospectus terms"
+        print(f"  [Prospectus Agent] SUCCESS. Extracted {security_name}.")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Agent 5: Quality Check Agent (Conditional Router)
 # ---------------------------------------------------------------------------
 
 def quality_check_agent(state: AdvancedSwarmState) -> dict:
@@ -176,6 +248,7 @@ def quality_check_agent(state: AdvancedSwarmState) -> dict:
     market_data = state.get("market_data", {})
     rate_data = state.get("rate_data", {})
     dividend_data = state.get("dividend_data", {})
+    prospectus_terms = state.get("prospectus_terms", {})
 
     # Score each data source
     checks = {}
@@ -208,16 +281,32 @@ def quality_check_agent(state: AdvancedSwarmState) -> dict:
         "has_frequency": has_frequency,
         "score": sum([has_div_history, has_frequency]) / 2
     }
-    
+
+    # Prospectus extraction checks
+    has_security_name = prospectus_terms.get("security_name") is not None
+    has_coupon = prospectus_terms.get("coupon_rate") is not None
+    has_structure = any(
+        prospectus_terms.get(key) is not None
+        for key in ("call_date", "call_price", "par_value", "perpetual", "coupon_type")
+    )
+    checks["prospectus_terms"] = {
+        "has_security_name": has_security_name,
+        "has_coupon_rate": has_coupon,
+        "has_structure_terms": has_structure,
+        "score": sum([has_security_name, has_coupon, has_structure]) / 3
+    }
+
     # Overall quality score
     overall_score = (
-        checks["market_data"]["score"] * 0.4 +
-        checks["rate_data"]["score"] * 0.3 +
-        checks["dividend_data"]["score"] * 0.3
+        checks["market_data"]["score"] * 0.30 +
+        checks["rate_data"]["score"] * 0.20 +
+        checks["dividend_data"]["score"] * 0.15 +
+        checks["prospectus_terms"]["score"] * 0.35
     )
-    
-    # Decision: pass if score >= 0.5 (we can synthesize with partial data)
-    passed = overall_score >= 0.5
+
+    # Decision: pass if score clears the threshold and we have either live pricing
+    # or extracted prospectus terms so the synthesis has something substantial to use.
+    passed = overall_score >= 0.55 and (has_price or has_security_name)
     
     quality_report = {
         "checks": checks,
@@ -253,7 +342,7 @@ def route_after_quality_check(state: AdvancedSwarmState) -> Literal["synthesis_a
 
 
 # ---------------------------------------------------------------------------
-# Agent 5: Synthesis Agent (Reasoning Agent)
+# Agent 6: Synthesis Agent (Reasoning Agent)
 # ---------------------------------------------------------------------------
 
 def synthesis_agent(state: AdvancedSwarmState) -> dict:
@@ -269,10 +358,15 @@ def synthesis_agent(state: AdvancedSwarmState) -> dict:
     market_data = state["market_data"]
     rate_data = state["rate_data"]
     dividend_data = state["dividend_data"]
+    prospectus_terms = state.get("prospectus_terms", {})
 
     # Build the institutional-grade prompt inline (no external file dependency)
     ticker = market_data.get("ticker", state.get("ticker", "N/A"))
-    issuer = market_data.get("name", "Unknown Issuer").replace("Preferred Stock", "").strip()
+    issuer = (
+        prospectus_terms.get("issuer")
+        or market_data.get("name", "Unknown Issuer")
+    )
+    issuer = str(issuer).replace("Preferred Stock", "").strip()
     current_price = market_data.get("price", 0.0) or 0.0
     raw_yield = market_data.get("dividend_yield") or 0.0
     div_yield = raw_yield * 100 if raw_yield < 1 else raw_yield
@@ -291,14 +385,47 @@ def synthesis_agent(state: AdvancedSwarmState) -> dict:
     else:
         trading_range_desc = "at an undetermined range"
 
+    call_price_equiv = _normalize_prospectus_amount(
+        prospectus_terms.get("call_price"), prospectus_terms
+    )
+    par_value_equiv = _normalize_prospectus_amount(
+        prospectus_terms.get("par_value"), prospectus_terms
+    )
+    comparison_anchor = call_price_equiv or par_value_equiv
+    premium_to_anchor = (
+        round(current_price - comparison_anchor, 2)
+        if current_price and comparison_anchor is not None
+        else None
+    )
+    anchor_label = (
+        "call value"
+        if call_price_equiv is not None
+        else "par value"
+        if par_value_equiv is not None
+        else "not available"
+    )
+
+    qdi_flag = prospectus_terms.get("qdi_eligible")
+    if qdi_flag is True:
+        qdi_summary = "Likely QDI eligible"
+    elif qdi_flag is False:
+        qdi_summary = "Likely not QDI eligible"
+    else:
+        qdi_summary = "QDI eligibility not determined"
+
+    comparison_anchor_text = f"${comparison_anchor:.2f}" if comparison_anchor is not None else "N/A"
+    premium_to_anchor_text = f"{premium_to_anchor:+.2f}" if premium_to_anchor is not None else "N/A"
+
     system_prompt = (
         "You are an expert financial analyst specializing in preferred equity securities. "
-        "Your task is to synthesize the provided market, rate, and dividend data for a given "
+        "Your task is to synthesize the provided market, rate, dividend, and SEC prospectus data for a given "
         "preferred stock into a concise, professional research note suitable for an institutional investor. "
         "Output must be in Markdown format with clear headings. "
         "Do NOT include any raw JSON, base64 strings, or technical metadata in your output. "
         "Do not use em dashes or sentence dashes. "
-        "The tone should be professional and objective."
+        "The tone should be professional and objective. "
+        "When prospectus terms are available, treat them as the ground truth for structural features such as "
+        "coupon type, callability, perpetual status, and depositary share terms."
     )
 
     user_prompt = f"""Produce a professional preferred equity research note for {ticker} issued by {issuer}.
@@ -311,20 +438,36 @@ Key pre-computed context:
 - Dividend Frequency: {dividend_data.get('frequency', 'N/A')}
 - Dividend Consistency: {dividend_data.get('consistency', 'N/A')}
 - Trailing Annual Dividend: ${dividend_data.get('trailing_annual_dividends', 0.0):.4f}
+- Prospectus Security Name: {prospectus_terms.get('security_name', 'N/A')}
+- Coupon: {prospectus_terms.get('coupon_rate', 'N/A')}% ({prospectus_terms.get('coupon_type', 'N/A')})
+- First Call Date: {prospectus_terms.get('call_date', 'N/A')}
+- Perpetual: {prospectus_terms.get('perpetual', 'N/A')}
+- QDI Status: {qdi_summary}
+- Depositary Share Structure: {prospectus_terms.get('deposit_fraction', 'N/A') if prospectus_terms.get('deposit_shares') else 'No depositary share structure flagged'}
+- Per-depositary-share comparison anchor ({anchor_label}): {comparison_anchor_text}
+- Premium / discount to comparison anchor: {premium_to_anchor_text}
 
 Full data for deeper analysis:
 MARKET DATA: {json.dumps(market_data, indent=2, default=str)}
 TREASURY YIELD CURVE: {json.dumps(rate_data, indent=2)}
 DIVIDEND ANALYSIS: {json.dumps(dividend_data, indent=2, default=str)}
+PROSPECTUS TERMS: {json.dumps(prospectus_terms, indent=2, default=str)}
 
 Structure your report with these sections:
 1. Executive Summary
 2. Security Overview
-3. Risk Analysis (Interest Rate Sensitivity, Credit Risk, Call Risk)
-4. Dividend Profile (Dividend Safety and Consistency, Yield Analysis)
-5. Conclusion and Key Considerations
+3. Prospectus Terms Snapshot
+4. Risk Analysis (Interest Rate Sensitivity, Credit/Structure Risk, Call Risk)
+5. Dividend and Tax Profile
+6. Conclusion and Key Considerations
 
-Replace all bracketed placeholders with actual calculated values. Do not output any JSON or raw data."""
+Specific guidance:
+- When the security is issued as depositary shares, compare the market price to the per-depositary-share equivalent amounts provided above, not the underlying $10,000 preference.
+- If prospectus fields are missing, say so briefly instead of inventing terms.
+- Discuss whether the security is trading above or below its call or par anchor when that information is available.
+- Keep the note concise and investment-oriented.
+
+Do not output any JSON or raw data."""
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -358,7 +501,7 @@ Replace all bracketed placeholders with actual calculated values. Do not output 
 
 
 # ---------------------------------------------------------------------------
-# Agent 6: Error Report Agent (Fallback)
+# Agent 7: Error Report Agent (Fallback)
 # ---------------------------------------------------------------------------
 
 def error_report_agent(state: AdvancedSwarmState) -> dict:
@@ -376,7 +519,7 @@ def error_report_agent(state: AdvancedSwarmState) -> dict:
     
     report = (
         f"## Analysis Could Not Be Completed\n\n"
-        f"The data quality score was {score:.0%}, which is below the 50% threshold "
+        f"The data quality score was {score:.0%}, which is below the 55% threshold "
         f"required for a reliable analysis.\n\n"
         f"### Missing or Insufficient Data\n\n"
     )
@@ -410,11 +553,11 @@ def build_advanced_graph() -> StateGraph:
     
     Key LangGraph patterns demonstrated:
     
-    1. PARALLEL FAN-OUT: Three agents start from the same entry point
-       and run concurrently (market_data, rate_context, dividend)
-    
-    2. FAN-IN: All three converge at quality_check_agent
-    
+    1. PARALLEL FAN-OUT: Four agents start from the same entry point
+       and run concurrently (market_data, rate_context, dividend, prospectus)
+
+    2. FAN-IN: All four converge at quality_check_agent
+
     3. CONDITIONAL EDGE: quality_check routes to either synthesis or error_report
     """
     workflow = StateGraph(AdvancedSwarmState)
@@ -423,21 +566,24 @@ def build_advanced_graph() -> StateGraph:
     workflow.add_node("market_data_agent", market_data_agent)
     workflow.add_node("rate_context_agent", rate_context_agent)
     workflow.add_node("dividend_agent", dividend_agent)
+    workflow.add_node("prospectus_agent", prospectus_agent)
     workflow.add_node("quality_check_agent", quality_check_agent)
     workflow.add_node("synthesis_agent", synthesis_agent)
     workflow.add_node("error_report_agent", error_report_agent)
 
     # PATTERN 1: Parallel Fan-Out
-    # All three data agents start from START and run in parallel
+    # All four data agents start from START and run in parallel
     workflow.add_edge(START, "market_data_agent")
     workflow.add_edge(START, "rate_context_agent")
     workflow.add_edge(START, "dividend_agent")
+    workflow.add_edge(START, "prospectus_agent")
 
     # PATTERN 2: Fan-In
-    # All three data agents converge at the quality check
+    # All four data agents converge at the quality check
     workflow.add_edge("market_data_agent", "quality_check_agent")
     workflow.add_edge("rate_context_agent", "quality_check_agent")
     workflow.add_edge("dividend_agent", "quality_check_agent")
+    workflow.add_edge("prospectus_agent", "quality_check_agent")
 
     # PATTERN 3: Conditional Routing
     # Quality check decides which agent runs next
@@ -478,6 +624,7 @@ def analyze_preferred_advanced(ticker: str) -> dict:
         "market_data": {},
         "rate_data": {},
         "dividend_data": {},
+        "prospectus_terms": {},
         "quality_report": {},
         "synthesis": "",
         "errors": [],
@@ -487,7 +634,7 @@ def analyze_preferred_advanced(ticker: str) -> dict:
     print(f"\n{'='*60}")
     print(f"  ADVANCED PREFERRED EQUITY SWARM: Analyzing {ticker}")
     print(f"{'='*60}")
-    print(f"  Agents: Market Data | Rate Context | Dividend Analysis")
+    print(f"  Agents: Market Data | Rate Context | Dividend Analysis | Prospectus")
     print(f"  Quality Gate: Enabled")
     print(f"  Conditional Routing: Synthesis or Error Report")
     print(f"{'='*60}\n")

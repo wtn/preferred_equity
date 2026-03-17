@@ -45,8 +45,9 @@ with st.sidebar:
     st.write(
         "This demo showcases a multi-agent AI swarm that analyzes "
         "preferred equity securities. The swarm coordinates specialized "
-        "agents running in parallel, with a quality gate that determines "
-        "whether data is sufficient for AI synthesis."
+        "agents running in parallel, combining live market data with SEC "
+        "prospectus extraction before a quality gate determines whether "
+        "data is sufficient for AI synthesis."
     )
     
     st.markdown("---")
@@ -57,20 +58,21 @@ with st.sidebar:
     1. Market Data Agent
     2. Rate Context Agent
     3. Dividend Analysis Agent
+    4. Prospectus Parsing Agent
     
     **Quality Gate:**
-    4. Quality Check Agent
+    5. Quality Check Agent
     
     **Conditional Routing:**
-    5a. Synthesis Agent (Gemini) *or*
-    5b. Error Report Agent
+    6a. Synthesis Agent (Gemini) *or*
+    6b. Error Report Agent
     """)
     
     st.markdown("---")
     
     st.subheader("LangGraph Patterns")
     st.markdown("""
-    **Fan-Out:** 3 agents run in parallel from START
+    **Fan-Out:** 4 agents run in parallel from START
     
     **Fan-In:** All converge at Quality Check
     
@@ -78,7 +80,7 @@ with st.sidebar:
     """)
     
     st.markdown("---")
-    st.caption("Phase 0: Advanced Prototype")
+    st.caption("Phase 2: Vertical Slice Prototype")
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +88,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 st.title("Preferred Equity Analysis Swarm")
-st.markdown("Enter a preferred stock ticker to run the multi-agent analysis with parallel execution and quality gating.")
+st.markdown("Enter a preferred stock ticker to run the multi-agent analysis with parallel execution, SEC prospectus extraction, and quality gating.")
 
 # Sample tickers for easy access
 col1, col2 = st.columns([3, 1])
@@ -133,7 +135,7 @@ if analyze_button and ticker:
         
         # Run the swarm
         try:
-            status_placeholder.info("Running 3 data agents in parallel...")
+            status_placeholder.info("Running 4 data agents in parallel...")
             progress_bar.progress(10, text="Data agents running in parallel...")
             
             result = analyze_preferred_advanced(ticker)
@@ -167,13 +169,15 @@ if analyze_button and ticker:
     
     agent_status = result.get("agent_status", {})
     quality_report = result.get("quality_report", {})
+    prospectus_terms = result.get("prospectus_terms", {})
     
-    status_cols = st.columns(5)
+    status_cols = st.columns(6)
     
     agent_labels = [
         ("market_data", "Market Data"),
         ("rate_context", "Rate Context"),
         ("dividend", "Dividend Analysis"),
+        ("prospectus", "Prospectus"),
     ]
     
     for i, (key, label) in enumerate(agent_labels):
@@ -186,7 +190,7 @@ if analyze_button and ticker:
             else:
                 st.metric(label, "?", delta="unknown", delta_color="off")
     
-    with status_cols[3]:
+    with status_cols[4]:
         qscore = quality_report.get("overall_score", 0)
         passed = quality_report.get("passed", False)
         st.metric(
@@ -196,7 +200,7 @@ if analyze_button and ticker:
             delta_color="normal" if passed else "inverse"
         )
     
-    with status_cols[4]:
+    with status_cols[5]:
         route = quality_report.get("decision", "unknown")
         if route == "proceed_to_synthesis":
             st.metric("Route Taken", "Synthesis", delta="AI analysis", delta_color="normal")
@@ -348,6 +352,63 @@ if analyze_button and ticker:
         )
         
         st.markdown("---")
+
+    # ---------------------------------------------------------------------------
+    # Prospectus Terms
+    # ---------------------------------------------------------------------------
+
+    if prospectus_terms and not prospectus_terms.get("error"):
+        st.subheader("Prospectus Terms (SEC)")
+
+        security_name = prospectus_terms.get("security_name", "Unknown security")
+        series = prospectus_terms.get("series", "N/A")
+        filing_url = prospectus_terms.get("filing_url")
+        filing_date = prospectus_terms.get("filing_date", "N/A")
+
+        st.markdown(f"**{security_name}**")
+        st.caption(f"Series: {series} | Filing date: {filing_date}")
+        if filing_url:
+            st.markdown(f"[Open filing on SEC.gov]({filing_url})")
+
+        prospectus_cols = st.columns(5)
+
+        with prospectus_cols[0]:
+            coupon_rate = prospectus_terms.get("coupon_rate")
+            st.metric("Coupon Rate", f"{coupon_rate:.2f}%" if isinstance(coupon_rate, (int, float)) else "N/A")
+        with prospectus_cols[1]:
+            st.metric("Coupon Type", str(prospectus_terms.get("coupon_type", "N/A")).title())
+        with prospectus_cols[2]:
+            st.metric("First Call Date", prospectus_terms.get("call_date", "N/A") or "N/A")
+        with prospectus_cols[3]:
+            qdi_flag = prospectus_terms.get("qdi_eligible")
+            if qdi_flag is True:
+                qdi_text = "Yes"
+            elif qdi_flag is False:
+                qdi_text = "No"
+            else:
+                qdi_text = "Unknown"
+            st.metric("QDI Eligible", qdi_text)
+        with prospectus_cols[4]:
+            perpetual = prospectus_terms.get("perpetual")
+            if perpetual is True:
+                perpetual_text = "Yes"
+            elif perpetual is False:
+                perpetual_text = "No"
+            else:
+                perpetual_text = "Unknown"
+            st.metric("Perpetual", perpetual_text)
+
+        st.caption(
+            f"Depositary shares: {prospectus_terms.get('deposit_fraction', 'No')} | "
+            f"Cumulative: {prospectus_terms.get('cumulative', 'Unknown')} | "
+            f"Exchange: {prospectus_terms.get('listing_exchange', 'N/A')}"
+        )
+
+        st.markdown("---")
+    elif prospectus_terms.get("error"):
+        st.subheader("Prospectus Terms (SEC)")
+        st.warning(prospectus_terms["error"])
+        st.markdown("---")
     
     # ---------------------------------------------------------------------------
     # AI Synthesis or Error Report
@@ -371,7 +432,7 @@ if analyze_button and ticker:
     with st.expander("View Quality Check Details"):
         checks = quality_report.get("checks", {})
         
-        qc_cols = st.columns(3)
+        qc_cols = st.columns(max(len(checks), 1))
         
         for i, (source, details) in enumerate(checks.items()):
             with qc_cols[i]:
@@ -388,7 +449,7 @@ if analyze_button and ticker:
     # ---------------------------------------------------------------------------
     
     with st.expander("View Raw Agent Outputs"):
-        raw_tabs = st.tabs(["Market Data", "Rate Data", "Dividend Data", "Agent Status"])
+        raw_tabs = st.tabs(["Market Data", "Rate Data", "Dividend Data", "Prospectus Terms", "Agent Status"])
         
         with raw_tabs[0]:
             st.json(market_data)
@@ -397,6 +458,8 @@ if analyze_button and ticker:
         with raw_tabs[2]:
             st.json(dividend_data)
         with raw_tabs[3]:
+            st.json(prospectus_terms)
+        with raw_tabs[4]:
             st.json(agent_status)
 
 elif not ticker:

@@ -43,4 +43,11 @@ pip install langgraph langchain langchain-google-genai langchain-community yfina
 
 ## Status
 
-Phase 0: Foundation and Learning (In Progress)
+Phase 2: Four-agent vertical slice in progress
+
+Current implemented slice:
+- Market Data Agent
+- Rate Context Agent
+- Dividend Analysis Agent
+- Prospectus Parsing Agent
+- Quality Gate with conditional routing into synthesis or fallback error reporting
