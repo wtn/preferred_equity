@@ -7,7 +7,8 @@ coupon structure:
 
 - Fixed-rate preferreds: effective duration and DV01 are meaningful.
 - Floating-rate preferreds: reset lag and benchmark/spread context matter more.
-- Fixed-to-floating preferreds: call/reset-aware effective duration is most useful.
+- Fixed-to-floating preferreds: call/reset-aware effective duration matters
+  before reset, while benchmark-linked coupon behavior matters after reset.
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ def analyze_interest_rate_sensitivity(
     current_yield = _preferred_current_yield_pct(market_data, prospectus_terms, price)
     years_to_call = _years_until(prospectus_terms.get("call_date"))
     years_to_reset = _years_until(prospectus_terms.get("fixed_to_floating_date"))
+    benchmark_context = _resolve_benchmark_context(
+        prospectus_terms.get("floating_benchmark"),
+        rate_data,
+    )
     if years_to_call is not None:
         years_to_call = max(0.0, years_to_call)
     if years_to_reset is not None:
@@ -70,15 +75,23 @@ def analyze_interest_rate_sensitivity(
         "current_yield_pct": current_yield,
         "treasury_anchor_pct": treasury_anchor,
         "benchmark": prospectus_terms.get("floating_benchmark"),
-        "benchmark_rate_pct": _benchmark_rate(
-            prospectus_terms.get("floating_benchmark"),
-            rate_data,
-        ),
+        "contractual_benchmark": benchmark_context.get("contractual_benchmark"),
+        "live_benchmark_label": benchmark_context.get("live_benchmark_label"),
+        "benchmark_replacement_method": benchmark_context.get("benchmark_replacement_method"),
+        "benchmark_rate_pct": benchmark_context.get("benchmark_rate_pct"),
         "floating_spread_bps": _to_float(prospectus_terms.get("floating_spread")),
+        "all_in_floating_coupon_pct": None,
+        "projected_post_reset_coupon_pct": None,
+        "is_benchmark_replacement_estimate": benchmark_context.get(
+            "is_benchmark_replacement_estimate",
+            False,
+        ),
+        "benchmark_note": benchmark_context.get("benchmark_note"),
         "call_date": prospectus_terms.get("call_date"),
         "years_to_call": years_to_call,
         "reset_date": prospectus_terms.get("fixed_to_floating_date"),
         "years_to_reset": years_to_reset,
+        "next_reset_tenor_years": _reset_period_years(dividend_frequency),
         "comparison_anchor_price": comparison_anchor,
         "premium_to_anchor": premium_to_anchor,
         "dividend_frequency": dividend_frequency,
@@ -89,11 +102,17 @@ def analyze_interest_rate_sensitivity(
         "effective_dv01_per_share": None,
         "effective_dv01_per_1000_market_value": None,
         "scenario_table": [],
+        "scenario_table_type": "price_duration",
         "rate_risk_level": None,
         "confidence": "medium",
         "summary": "",
         "methodology": "",
     }
+
+    analysis["all_in_floating_coupon_pct"] = _all_in_floating_coupon_pct(
+        analysis.get("benchmark_rate_pct"),
+        analysis.get("floating_spread_bps"),
+    )
 
     if coupon_type == "floating":
         analysis.update(_analyze_floating_security(analysis))
@@ -102,10 +121,11 @@ def analyze_interest_rate_sensitivity(
     else:
         analysis.update(_analyze_fixed_security(analysis, prospectus_terms))
 
-    analysis["scenario_table"] = _scenario_table(
-        price=price,
-        effective_duration=analysis.get("effective_duration"),
-    )
+    if not analysis.get("scenario_table"):
+        analysis["scenario_table"] = _duration_scenario_table(
+            price=price,
+            effective_duration=analysis.get("effective_duration"),
+        )
     analysis["summary"] = _build_summary(analysis)
     return analysis
 
@@ -154,20 +174,39 @@ def _analyze_floating_security(analysis: Dict[str, Any]) -> Dict[str, Any]:
     )
     dv01_per_share = round(analysis["current_price"] * effective_duration * 0.0001, 4)
     dv01_per_1000 = round(effective_duration * 0.1, 3)
+    all_in_coupon = analysis.get("all_in_floating_coupon_pct")
+    live_benchmark_label = analysis.get("live_benchmark_label")
+    methodology = (
+        "Floating-rate preferreds are best framed through their reference-rate linkage. "
+        "Duration and DV01 are secondary because the coupon resets with the benchmark."
+    )
+    confidence = "medium"
+    if analysis.get("benchmark_rate_pct") is None:
+        confidence = "low"
+        methodology += " Benchmark data was unavailable, so the floating coupon estimate is omitted."
+    elif "fallback" in str(analysis.get("benchmark_replacement_method", "")).lower():
+        confidence = "low"
+        methodology += " SOFR data was unavailable, so a Treasury proxy fallback was used."
+
+    primary_measure = "All-In Floating Coupon" if all_in_coupon is not None else "Reset Period"
+    primary_value = round(all_in_coupon, 2) if all_in_coupon is not None else round(reset_period_years, 2)
 
     return {
         "regime": "floating_rate",
-        "primary_measure": "Reset Period",
-        "primary_value": round(reset_period_years, 2),
+        "primary_measure": primary_measure,
+        "primary_value": primary_value,
         "effective_duration": round(effective_duration, 2),
         "effective_dv01_per_share": dv01_per_share,
         "effective_dv01_per_1000_market_value": dv01_per_1000,
         "rate_risk_level": "low",
-        "confidence": "medium",
-        "methodology": (
-            "DV01 is secondary for floating-rate preferreds. "
-            "The shorter reset period and benchmark/spread linkage are more informative."
+        "confidence": confidence,
+        "scenario_table_type": "benchmark_coupon" if all_in_coupon is not None else "price_duration",
+        "scenario_table": _benchmark_coupon_scenario_table(
+            base_benchmark_rate_pct=analysis.get("benchmark_rate_pct"),
+            floating_spread_bps=analysis.get("floating_spread_bps"),
+            benchmark_label=live_benchmark_label,
         ),
+        "methodology": methodology,
     }
 
 
@@ -179,6 +218,8 @@ def _analyze_fixed_to_floating_security(analysis: Dict[str, Any]) -> Dict[str, A
 
     fixed_base_duration = max(1.0, min(20.0, 100.0 / current_yield))
     years_to_reset = analysis.get("years_to_reset")
+    projected_post_reset_coupon = analysis.get("all_in_floating_coupon_pct")
+    reset_period_years = _reset_period_years(analysis.get("dividend_frequency"))
 
     if years_to_reset is None:
         effective_duration = fixed_base_duration * 0.5
@@ -189,14 +230,38 @@ def _analyze_fixed_to_floating_security(analysis: Dict[str, Any]) -> Dict[str, A
             "Use call/reset-aware effective duration until the floating reset date. "
             "Reset date was not available, so the estimate is lower confidence."
         )
+        scenario_table_type = "price_duration"
+        scenario_table: List[Dict[str, Any]] = []
     elif years_to_reset == 0:
-        effective_duration = max(0.25, min(1.0, fixed_base_duration * 0.3))
+        effective_duration = min(
+            reset_period_years,
+            analysis.get("years_to_call") if analysis.get("years_to_call") else reset_period_years,
+        )
         confidence = "medium"
-        primary_measure = "Post-Reset Duration Proxy"
-        primary_value = round(effective_duration, 2)
+        primary_measure = (
+            "All-In Floating Coupon"
+            if projected_post_reset_coupon is not None
+            else "Post-Reset Duration Proxy"
+        )
+        primary_value = (
+            round(projected_post_reset_coupon, 2)
+            if projected_post_reset_coupon is not None
+            else round(effective_duration, 2)
+        )
         methodology = (
             "This preferred appears to be in its floating-rate regime already, "
-            "so rate sensitivity is framed as a short reset-based duration proxy."
+            "so rate sensitivity is framed around its live benchmark plus spread."
+        )
+        if "fallback" in str(analysis.get("benchmark_replacement_method", "")).lower():
+            confidence = "low"
+            methodology += " SOFR data was unavailable, so a Treasury proxy fallback was used."
+        scenario_table_type = (
+            "benchmark_coupon" if projected_post_reset_coupon is not None else "price_duration"
+        )
+        scenario_table = _benchmark_coupon_scenario_table(
+            base_benchmark_rate_pct=analysis.get("benchmark_rate_pct"),
+            floating_spread_bps=analysis.get("floating_spread_bps"),
+            benchmark_label=analysis.get("live_benchmark_label"),
         )
     elif years_to_reset <= 1:
         effective_duration = max(0.25, min(1.0, years_to_reset * 0.8))
@@ -207,6 +272,12 @@ def _analyze_fixed_to_floating_security(analysis: Dict[str, Any]) -> Dict[str, A
             "Use call/reset-aware effective duration until the floating reset date. "
             "Treasury DV01 falls as the reset date approaches."
         )
+        if projected_post_reset_coupon is not None:
+            methodology += (
+                " A projected post-reset coupon estimate is included using the live benchmark plus spread."
+            )
+        scenario_table_type = "price_duration"
+        scenario_table = []
     else:
         effective_duration = min(fixed_base_duration, years_to_reset * 0.9)
         confidence = "high"
@@ -216,6 +287,12 @@ def _analyze_fixed_to_floating_security(analysis: Dict[str, Any]) -> Dict[str, A
             "Use call/reset-aware effective duration until the floating reset date. "
             "Treasury DV01 falls as the reset date approaches."
         )
+        if projected_post_reset_coupon is not None:
+            methodology += (
+                " A projected post-reset coupon estimate is included using the live benchmark plus spread."
+            )
+        scenario_table_type = "price_duration"
+        scenario_table = []
 
     effective_duration = _call_adjusted_duration(
         base_duration=effective_duration,
@@ -234,6 +311,13 @@ def _analyze_fixed_to_floating_security(analysis: Dict[str, Any]) -> Dict[str, A
         "effective_dv01_per_1000_market_value": dv01_per_1000,
         "rate_risk_level": _risk_bucket(effective_duration),
         "confidence": confidence,
+        "projected_post_reset_coupon_pct": (
+            round(projected_post_reset_coupon, 2)
+            if projected_post_reset_coupon is not None and years_to_reset not in (None, 0)
+            else analysis.get("projected_post_reset_coupon_pct")
+        ),
+        "scenario_table_type": scenario_table_type,
+        "scenario_table": scenario_table,
         "methodology": methodology,
     }
 
@@ -249,8 +333,22 @@ def _build_summary(analysis: Dict[str, Any]) -> str:
     parts = [regime]
 
     if analysis.get("primary_measure") and analysis.get("primary_value") is not None:
-        unit = " yrs" if "Duration" in str(analysis["primary_measure"]) or "Reset" in str(analysis["primary_measure"]) else ""
+        primary_measure = str(analysis["primary_measure"])
+        if "Duration" in primary_measure or "Reset" in primary_measure:
+            unit = " yrs"
+        elif "Coupon" in primary_measure:
+            unit = "%"
+        else:
+            unit = ""
         parts.append(f"{analysis['primary_measure']}: {analysis['primary_value']}{unit}")
+
+    benchmark_label = analysis.get("live_benchmark_label")
+    spread_bps = analysis.get("floating_spread_bps")
+    if benchmark_label and spread_bps is not None and analysis.get("regime") in {
+        "floating_rate",
+        "fixed_to_floating",
+    }:
+        parts.append(f"Live benchmark: {benchmark_label} + {int(round(spread_bps))} bps")
 
     dv01 = analysis.get("effective_dv01_per_share")
     if dv01 is not None:
@@ -260,10 +358,13 @@ def _build_summary(analysis: Dict[str, Any]) -> str:
     if risk_level:
         parts.append(f"Rate risk: {risk_level}")
 
+    if analysis.get("is_benchmark_replacement_estimate"):
+        parts.append("Benchmark replacement estimate")
+
     return " | ".join(parts)
 
 
-def _scenario_table(price: float, effective_duration: Optional[float]) -> List[Dict[str, Any]]:
+def _duration_scenario_table(price: float, effective_duration: Optional[float]) -> List[Dict[str, Any]]:
     """Simple parallel-shift scenario table using effective duration."""
     if price is None or effective_duration is None:
         return []
@@ -322,18 +423,117 @@ def _preferred_current_yield_pct(
     return round((annual_coupon_cash / price) * 100, 2)
 
 
-def _benchmark_rate(benchmark: Optional[str], rate_data: Dict[str, Any]) -> Optional[float]:
-    """Provide a current benchmark rate when one is meaningful."""
+def _resolve_benchmark_context(
+    benchmark: Optional[str],
+    rate_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve contractual vs live benchmark context for floating coupons."""
     if not benchmark:
-        return None
+        return {
+            "contractual_benchmark": None,
+            "live_benchmark_label": None,
+            "benchmark_replacement_method": None,
+            "benchmark_rate_pct": None,
+            "is_benchmark_replacement_estimate": False,
+            "benchmark_note": None,
+        }
 
-    label = benchmark.lower()
-    if "sofr" in label:
-        sofr = get_sofr_rate()
-        return sofr if sofr is not None else _first_available(rate_data, ["3M", "1M"])
-    if "libor" in label:
-        return _first_available(rate_data, ["3M", "1M"])
-    return None
+    label = str(benchmark).strip()
+    normalized = label.lower()
+    sofr = get_sofr_rate()
+
+    if "libor" in normalized:
+        if sofr is not None:
+            return {
+                "contractual_benchmark": label,
+                "live_benchmark_label": "3M SOFR",
+                "benchmark_replacement_method": "SOFR proxy",
+                "benchmark_rate_pct": sofr,
+                "is_benchmark_replacement_estimate": True,
+                "benchmark_note": (
+                    "Legacy LIBOR-linked terms are modeled with a live SOFR proxy "
+                    "because LIBOR is no longer the operative market benchmark."
+                ),
+            }
+        fallback = _first_available(rate_data, ["3M", "1M"])
+        return {
+            "contractual_benchmark": label,
+            "live_benchmark_label": "3M Treasury proxy",
+            "benchmark_replacement_method": "SOFR unavailable -> Treasury proxy fallback",
+            "benchmark_rate_pct": fallback,
+            "is_benchmark_replacement_estimate": True,
+            "benchmark_note": (
+                "SOFR data was unavailable, so the floating benchmark estimate fell "
+                "back to a short Treasury proxy."
+            ),
+        }
+
+    if "sofr" in normalized:
+        if sofr is not None:
+            return {
+                "contractual_benchmark": label,
+                "live_benchmark_label": label,
+                "benchmark_replacement_method": "Contractual benchmark",
+                "benchmark_rate_pct": sofr,
+                "is_benchmark_replacement_estimate": False,
+                "benchmark_note": None,
+            }
+        fallback = _first_available(rate_data, ["3M", "1M"])
+        return {
+            "contractual_benchmark": label,
+            "live_benchmark_label": "SOFR proxy fallback",
+            "benchmark_replacement_method": "SOFR unavailable -> Treasury proxy fallback",
+            "benchmark_rate_pct": fallback,
+            "is_benchmark_replacement_estimate": True,
+            "benchmark_note": (
+                "SOFR data was unavailable, so the live benchmark estimate fell back "
+                "to a short Treasury proxy."
+            ),
+        }
+
+    return {
+        "contractual_benchmark": label,
+        "live_benchmark_label": label,
+        "benchmark_replacement_method": "Contractual benchmark",
+        "benchmark_rate_pct": None,
+        "is_benchmark_replacement_estimate": False,
+        "benchmark_note": None,
+    }
+
+
+def _all_in_floating_coupon_pct(
+    benchmark_rate_pct: Optional[float],
+    floating_spread_bps: Optional[float],
+) -> Optional[float]:
+    """Compute an all-in floating coupon from benchmark plus spread."""
+    if benchmark_rate_pct is None or floating_spread_bps is None:
+        return None
+    return round(benchmark_rate_pct + (floating_spread_bps / 100.0), 2)
+
+
+def _benchmark_coupon_scenario_table(
+    base_benchmark_rate_pct: Optional[float],
+    floating_spread_bps: Optional[float],
+    benchmark_label: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Scenario table for floating coupons under benchmark shocks."""
+    if base_benchmark_rate_pct is None or floating_spread_bps is None:
+        return []
+
+    scenarios: List[Dict[str, Any]] = []
+    for shock_bps in (-100, -50, 50, 100):
+        shocked_benchmark = round(base_benchmark_rate_pct + (shock_bps / 100.0), 2)
+        all_in_coupon = round(shocked_benchmark + (floating_spread_bps / 100.0), 2)
+        scenarios.append(
+            {
+                "shock_bps": shock_bps,
+                "scenario_type": "benchmark_coupon",
+                "benchmark_label": benchmark_label or "Benchmark",
+                "benchmark_rate_pct": shocked_benchmark,
+                "all_in_coupon_pct": all_in_coupon,
+            }
+        )
+    return scenarios
 
 
 def _call_adjusted_duration(

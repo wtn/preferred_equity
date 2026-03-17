@@ -496,6 +496,9 @@ Key pre-computed context:
 - Rate Summary: {rate_sensitivity.get('summary', 'N/A')}
 - Effective Duration: {rate_sensitivity.get('effective_duration', 'N/A')}
 - Effective DV01 / share: {rate_sensitivity.get('effective_dv01_per_share', 'N/A')}
+- Contractual Floating Benchmark: {rate_sensitivity.get('contractual_benchmark', 'N/A')}
+- Live Benchmark Used: {rate_sensitivity.get('live_benchmark_label', 'N/A')}
+- All-In Floating Coupon Estimate: {rate_sensitivity.get('all_in_floating_coupon_pct', rate_sensitivity.get('projected_post_reset_coupon_pct', 'N/A'))}
 
 Full data for deeper analysis:
 MARKET DATA: {json.dumps(market_data, indent=2, default=str)}

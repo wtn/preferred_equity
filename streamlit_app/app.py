@@ -318,6 +318,8 @@ if analyze_button and ticker:
             if isinstance(primary_value, (int, float)):
                 if "Duration" in primary_measure or "Reset" in primary_measure:
                     primary_text = f"{primary_value:.2f} yrs"
+                elif "Coupon" in primary_measure:
+                    primary_text = f"{primary_value:.2f}%"
                 else:
                     primary_text = f"{primary_value:.2f}"
             else:
@@ -345,19 +347,94 @@ if analyze_button and ticker:
             st.caption(rate_sensitivity["summary"])
         if rate_sensitivity.get("methodology"):
             st.caption(rate_sensitivity["methodology"])
+        if rate_sensitivity.get("benchmark_note"):
+            st.caption(f"Note: {rate_sensitivity['benchmark_note']}")
+
+        benchmark_fields_present = any(
+            rate_sensitivity.get(key) is not None
+            for key in (
+                "contractual_benchmark",
+                "live_benchmark_label",
+                "benchmark_replacement_method",
+                "all_in_floating_coupon_pct",
+                "projected_post_reset_coupon_pct",
+            )
+        )
+        if benchmark_fields_present:
+            st.markdown("**Benchmark Context**")
+            benchmark_cols = st.columns(4)
+
+            with benchmark_cols[0]:
+                st.metric(
+                    "Contractual Benchmark",
+                    str(rate_sensitivity.get("contractual_benchmark") or "N/A"),
+                )
+
+            with benchmark_cols[1]:
+                st.metric(
+                    "Live Benchmark Used",
+                    str(rate_sensitivity.get("live_benchmark_label") or "N/A"),
+                )
+
+            with benchmark_cols[2]:
+                st.metric(
+                    "Replacement Method",
+                    str(rate_sensitivity.get("benchmark_replacement_method") or "N/A"),
+                )
+
+            coupon_estimate = rate_sensitivity.get("all_in_floating_coupon_pct")
+            coupon_label = "All-In Reset Coupon"
+            if coupon_estimate is None:
+                coupon_estimate = rate_sensitivity.get("projected_post_reset_coupon_pct")
+                coupon_label = "Projected Post-Reset Coupon"
+
+            with benchmark_cols[3]:
+                st.metric(
+                    coupon_label,
+                    (
+                        f"{coupon_estimate:.2f}%"
+                        if isinstance(coupon_estimate, (int, float))
+                        else "N/A"
+                    ),
+                )
+
+            next_reset_tenor = rate_sensitivity.get("next_reset_tenor_years")
+            if isinstance(next_reset_tenor, (int, float)):
+                st.caption(f"Next reset tenor assumption: {next_reset_tenor:.2f} years")
 
         scenario_table = rate_sensitivity.get("scenario_table", [])
         if scenario_table:
-            scenario_df = pd.DataFrame(
-                [
-                    {
-                        "Shock (bps)": row["shock_bps"],
-                        "Estimated Price Change": row["estimated_price_change"],
-                        "Estimated Price": row["estimated_price"],
-                    }
-                    for row in scenario_table
-                ]
-            )
+            if rate_sensitivity.get("scenario_table_type") == "benchmark_coupon":
+                benchmark_label = rate_sensitivity.get("live_benchmark_label") or "Benchmark"
+                scenario_df = pd.DataFrame(
+                    [
+                        {
+                            "Shock (bps)": row["shock_bps"],
+                            f"{benchmark_label} Rate": (
+                                f"{row['benchmark_rate_pct']:.2f}%"
+                                if isinstance(row.get("benchmark_rate_pct"), (int, float))
+                                else "N/A"
+                            ),
+                            "All-In Coupon": (
+                                f"{row['all_in_coupon_pct']:.2f}%"
+                                if isinstance(row.get("all_in_coupon_pct"), (int, float))
+                                else "N/A"
+                            ),
+                        }
+                        for row in scenario_table
+                    ]
+                )
+            else:
+                scenario_df = pd.DataFrame(
+                    [
+                        {
+                            "Shock (bps)": row["shock_bps"],
+                            "Estimated Price Change": row["estimated_price_change"],
+                            "Estimated Price": row["estimated_price"],
+                        }
+                        for row in scenario_table
+                    ]
+                )
             st.dataframe(scenario_df, use_container_width=True, hide_index=True)
 
         st.markdown("---")
