@@ -5,12 +5,26 @@ Loads environment variables and provides shared settings.
 LLM priority:
   1. Google Gemini via GOOGLE_API_KEY (primary)
   2. OpenAI-compatible API via OPENAI_API_KEY (fallback)
+
+This module handles both local .env files and Streamlit Cloud secrets.
 """
 
 import os
 from dotenv import load_dotenv
 
+# 1. Load from .env if present (local development)
 load_dotenv()
+
+# 2. Check for Streamlit secrets (deployment)
+try:
+    import streamlit as st
+    if hasattr(st, "secrets"):
+        # Inject st.secrets into os.environ so other libraries can see them
+        for key in ["GOOGLE_API_KEY", "OPENAI_API_KEY", "FRED_API_KEY", "SEC_USER_AGENT"]:
+            if key in st.secrets:
+                os.environ[key] = st.secrets[key]
+except ImportError:
+    pass
 
 # LLM Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
@@ -50,23 +64,27 @@ def get_llm(temperature: float = 0.3):
     Returns:
         A LangChain chat model instance.
     """
+    # Refresh keys from environment in case they were injected after module load
+    google_key = os.getenv("GOOGLE_API_KEY", GOOGLE_API_KEY)
+    openai_key = os.getenv("OPENAI_API_KEY", OPENAI_API_KEY)
+
     # Primary: Google Gemini
-    if GOOGLE_API_KEY:
+    if google_key:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(
             model=GEMINI_MODEL,
-            google_api_key=GOOGLE_API_KEY,
+            google_api_key=google_key,
             temperature=temperature,
         )
 
     # Fallback: OpenAI-compatible API
-    if OPENAI_API_KEY:
+    if openai_key:
         from langchain_openai import ChatOpenAI
 
         kwargs = {
             "model": OPENAI_MODEL,
-            "api_key": OPENAI_API_KEY,
+            "api_key": openai_key,
             "temperature": temperature,
         }
         if OPENAI_BASE_URL:
@@ -76,7 +94,7 @@ def get_llm(temperature: float = 0.3):
 
     raise ValueError(
         "No LLM API key is configured. Set either GOOGLE_API_KEY or "
-        "OPENAI_API_KEY in your .env file.\n"
+        "OPENAI_API_KEY in your .env file or Streamlit secrets.\n"
         "  Google: https://aistudio.google.com/apikey\n"
         "  OpenAI: https://platform.openai.com/api-keys"
     )

@@ -244,7 +244,48 @@ if analyze_button and ticker:
                 )
 
         except Exception as e:
-            st.error(f"Analysis failed: {str(e)}")
+            # Enhanced error reporting for API key issues
+            error_msg = str(e)
+            if "No LLM API key is configured" in error_msg:
+                st.error(f"**Analysis failed: API Key Missing**")
+                st.markdown(f"""
+                The swarm requires an LLM API key to perform the final synthesis.
+                
+                **How to fix this in Streamlit Cloud:**
+                1. Go to your app settings in the Streamlit Cloud dashboard.
+                2. Navigate to the **Secrets** tab.
+                3. Add your key in TOML format:
+                ```toml
+                GOOGLE_API_KEY = "your-gemini-key-here"
+                # OR
+                OPENAI_API_KEY = "your-openai-key-here"
+                ```
+                4. Save and the app will restart.
+                """)
+                
+                # Diagnostic info (only shown when key is missing)
+                with st.expander("Diagnostic Info (Secrets Check)", expanded=True):
+                    st.write("Checking available secrets...")
+                    
+                    # Check st.secrets safely
+                    try:
+                        has_google = "GOOGLE_API_KEY" in st.secrets
+                        has_openai = "OPENAI_API_KEY" in st.secrets
+                    except Exception:
+                        has_google = False
+                        has_openai = False
+                        
+                    has_env_google = bool(os.environ.get("GOOGLE_API_KEY"))
+                    has_env_openai = bool(os.environ.get("OPENAI_API_KEY"))
+                    
+                    st.write(f"- Streamlit Secrets (Google): {'✅ Found' if has_google else '❌ Missing'}")
+                    st.write(f"- Streamlit Secrets (OpenAI): {'✅ Found' if has_openai else '❌ Missing'}")
+                    st.write(f"- Environment Vars (Google): {'✅ Found' if has_env_google else '❌ Missing'}")
+                    st.write(f"- Environment Vars (OpenAI): {'✅ Found' if has_env_openai else '❌ Missing'}")
+                    
+                    st.info("If secrets are missing but you added them to the dashboard, try rebooting the app in the Streamlit Cloud console.")
+            else:
+                st.error(f"Analysis failed: {error_msg}")
             st.stop()
 
     # Extract all result data
