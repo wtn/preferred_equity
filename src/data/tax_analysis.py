@@ -28,10 +28,12 @@ from typing import Any, Dict, List, Optional
 # Known issuer classifications
 # ---------------------------------------------------------------------------
 
-# Major bank holding companies and C-corporations whose preferred dividends
-# are generally QDI-eligible.  This is a curated list for the demo universe;
-# a production system would use SEC filings or a reference data provider.
+# Major bank holding companies, utilities, and other C-corporations whose
+# preferred dividends are generally QDI-eligible.  This is a curated list
+# for the demo universe; a production system would use SEC filings or a
+# reference data provider.
 KNOWN_C_CORPS = {
+    # Banks / Financial
     "bank of america",
     "citigroup",
     "jpmorgan chase",
@@ -52,8 +54,32 @@ KNOWN_C_CORPS = {
     "allstate",
     "american express",
     "general electric",
+    # Telecom
     "at&t",
     "verizon",
+    # Utilities (parent C-corps)
+    "edison international",
+    "southern california edison",
+    "duke energy",
+    "nextera energy",
+    "dominion energy",
+    "southern company",
+    "exelon",
+    "american electric power",
+    "entergy",
+    "firstenergy",
+    "xcel energy",
+    "eversource energy",
+    "consolidated edison",
+    "sempra",
+    "cms energy",
+    "dte energy",
+    "wec energy",
+    "ameren",
+    "alliant energy",
+    "atmos energy",
+    "pacific gas and electric",
+    "pg&e",
 }
 
 # REITs and trusts whose preferred dividends are generally NOT QDI-eligible.
@@ -74,6 +100,18 @@ KNOWN_NON_QDI_ISSUERS = {
     "sl green realty",
     "boston properties",
 }
+
+# Trust preferred securities (e.g., SCE Trust VI, JPMorgan Chase Capital Trust)
+# pay interest, not dividends, and are generally taxed as ordinary income.
+# The issuer name or security name typically contains "Trust" followed by a
+# Roman numeral or number.
+TRUST_PREFERRED_KEYWORDS = [
+    "trust i ", "trust ii ", "trust iii ", "trust iv ", "trust v ",
+    "trust vi ", "trust vii ", "trust viii ", "trust ix ", "trust x ",
+    "trust xi ", "trust xii ", "trust xiii ", "trust xiv ", "trust xv ",
+    "capital trust", "statutory trust",
+    "tr pref secs",  # yfinance shorthand (e.g., "SCE Trust VI 5% TR PREF SECS")
+]
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +180,11 @@ def analyze_tax_and_yield(
     result["annual_dividend_per_share"] = annual_dividend
 
     # --- QDI classification ---
-    issuer_type, qdi_eligible, qdi_reason = _classify_qdi(issuer, prospectus_qdi)
+    security_name = str(prospectus_terms.get("security_name", "")).strip()
+    # Also check the market data name (yfinance often includes "Trust" labels)
+    market_name = str(market_data.get("name", "")).strip()
+    combined_name = f"{security_name} {market_name}"
+    issuer_type, qdi_eligible, qdi_reason = _classify_qdi(issuer, prospectus_qdi, combined_name)
     result["issuer_type"] = issuer_type
     result["qdi_eligible"] = qdi_eligible
     result["qdi_classification_reason"] = qdi_reason
@@ -240,10 +282,18 @@ def analyze_tax_and_yield(
 def _classify_qdi(
     issuer: str,
     prospectus_qdi: Optional[bool],
+    security_name: str = "",
 ) -> tuple:
     """Classify QDI eligibility based on issuer name and prospectus metadata.
 
     Returns (issuer_type, qdi_eligible, reason).
+
+    Classification priority:
+      1. Explicit prospectus flag
+      2. Trust preferred detection (name contains "Trust I", "Trust VI", etc.)
+      3. Known REIT / non-QDI issuer list
+      4. Known C-corporation list
+      5. Unknown (conservative fallback)
     """
     # If the prospectus explicitly states QDI eligibility, use that
     if prospectus_qdi is True:
@@ -251,19 +301,25 @@ def _classify_qdi(
     if prospectus_qdi is False:
         return ("unknown", False, "Prospectus indicates dividends are not QDI eligible.")
 
-    # Check against known issuer lists
     issuer_lower = issuer.lower()
+    name_lower = security_name.lower() if security_name else ""
+    combined = f"{issuer_lower} {name_lower}"
 
-    for corp in KNOWN_C_CORPS:
-        if corp in issuer_lower:
+    # --- Trust preferred detection ---
+    # Trust preferreds pay interest (not dividends) and are taxed as ordinary
+    # income, even when the parent company is a C-corporation.
+    for keyword in TRUST_PREFERRED_KEYWORDS:
+        if keyword in combined:
             return (
-                "c_corp",
-                True,
-                f"{issuer} is a domestic C-corporation. Preferred dividends from "
-                f"C-corporations generally qualify for QDI treatment, subject to "
-                f"the 61-day holding period requirement."
+                "trust",
+                False,
+                f"{issuer} appears to be a trust preferred security. Trust preferred "
+                f"distributions are generally classified as interest income and taxed "
+                f"at ordinary income rates, not as qualified dividends, even when the "
+                f"parent company is a C-corporation."
             )
 
+    # --- Known non-QDI issuers (REITs, mortgage trusts) ---
     for non_qdi in KNOWN_NON_QDI_ISSUERS:
         if non_qdi in issuer_lower:
             return (
@@ -272,6 +328,17 @@ def _classify_qdi(
                 f"{issuer} appears to be a REIT or mortgage trust. Dividends from "
                 f"REITs and trusts are generally taxed as ordinary income and do "
                 f"not qualify for QDI treatment."
+            )
+
+    # --- Known C-corporations ---
+    for corp in KNOWN_C_CORPS:
+        if corp in issuer_lower:
+            return (
+                "c_corp",
+                True,
+                f"{issuer} is a domestic C-corporation. Preferred dividends from "
+                f"C-corporations generally qualify for QDI treatment, subject to "
+                f"the 61-day holding period requirement."
             )
 
     # Cannot determine

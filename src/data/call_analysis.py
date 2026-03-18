@@ -411,7 +411,17 @@ def _build_summary(
 # ---------------------------------------------------------------------------
 
 def _normalize_amount(amount: Optional[float], prospectus_terms: Dict[str, Any]) -> Optional[float]:
-    """Convert underlying preferred amounts to per-depositary-share equivalents."""
+    """Convert underlying preferred amounts to per-depositary-share equivalents.
+
+    Applies the depositary share fraction (e.g., 1/1000th) to convert the
+    underlying preferred share par value to the per-depositary-share amount.
+
+    Includes a sanity check: if the resulting value is less than $1.00, the
+    extracted par value is likely already stated in per-depositary-share terms
+    (common for utility trust preferreds like SCE-PL where par_value=25 is
+    already the depositary share par, not the underlying $2,500 share par).
+    In that case, the original amount is returned without applying the fraction.
+    """
     if amount is None:
         return None
     if prospectus_terms.get("deposit_shares"):
@@ -422,7 +432,14 @@ def _normalize_amount(amount: Optional[float], prospectus_terms: Dict[str, Any])
             if match:
                 num, den = int(match.group(1)), int(match.group(2))
                 if den > 0:
-                    return round(amount * (num / den), 4)
+                    normalized = amount * (num / den)
+                    # Sanity check: if the result is less than $1, the
+                    # extracted amount is almost certainly already per-
+                    # depositary-share (preferred par values are typically
+                    # $25 per depositary share, never sub-dollar).
+                    if normalized < 1.0 and amount >= 1.0:
+                        return round(amount, 4)
+                    return round(normalized, 4)
     return round(amount, 4)
 
 
