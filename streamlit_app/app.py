@@ -226,30 +226,38 @@ with col2:
     analyze_button = st.button("Analyze", type="primary", use_container_width=True)
 
 # ---------------------------------------------------------------------------
-# Curated Universe: Issuer-Grouped Ticker Picker
+# Curated Universe: Ticker Picker
 # ---------------------------------------------------------------------------
-st.caption("Select from curated universe (65 securities, 22 issuers):")
-
 universe_groups = get_universe_grouped_by_issuer()
 demo_set = set(get_demo_tickers())
 
-for group in universe_groups:
-    issuer_label = f"**{group['issuer_name']}** ({group['parent_ticker']})"
-    tickers_in_group = group["tickers"]
-    num_cols = min(len(tickers_in_group), 8)
-    cols = st.columns([1.8] + [1] * num_cols)
-    with cols[0]:
-        st.markdown(f"<div style='padding-top:6px;font-size:0.85em;'>{issuer_label}</div>", unsafe_allow_html=True)
-    for j, t in enumerate(tickers_in_group):
-        with cols[j + 1]:
-            # Series letter only for the button label, with a visual indicator for cached
-            series_letter = t.split("-P")[-1] if "-P" in t else t
-            btn_label = f"{series_letter} *" if t in demo_set else series_letter
-            if st.button(btn_label, key=f"univ_{t}", use_container_width=True, help=t):
-                ticker = t
-                analyze_button = True
+with st.expander("Browse Curated Universe (65 securities, 22 issuers)", expanded=False):
+    st.caption("Click any ticker to analyze. Tickers with a green dot have cached prospectus data for faster analysis.")
 
-st.caption("\* = prospectus cached (fast analysis)")
+    # Build a uniform 6-column grid, one issuer per row
+    COLS_PER_ROW = 6
+    for group in universe_groups:
+        issuer_name = group["issuer_name"]
+        parent = group["parent_ticker"]
+        tickers_in_group = group["tickers"]
+
+        st.markdown(
+            f"<p style='margin-bottom:2px;margin-top:12px;font-size:0.82em;color:#888;'>"
+            f"{issuer_name} ({parent})</p>",
+            unsafe_allow_html=True,
+        )
+
+        # Render buttons in rows of COLS_PER_ROW
+        for row_start in range(0, len(tickers_in_group), COLS_PER_ROW):
+            row_tickers = tickers_in_group[row_start : row_start + COLS_PER_ROW]
+            cols = st.columns(COLS_PER_ROW)
+            for j, t in enumerate(row_tickers):
+                with cols[j]:
+                    is_cached = t in demo_set
+                    dot = "\U0001f7e2 " if is_cached else ""
+                    if st.button(f"{dot}{t}", key=f"univ_{t}", use_container_width=True):
+                        ticker = t
+                        analyze_button = True
 
 # Validate ticker through the security resolver
 normalized = normalize_ticker(ticker.strip())
